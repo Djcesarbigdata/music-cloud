@@ -1,0 +1,101 @@
+// server.js - Music Cloud unified server
+const express = require('express');
+const mongoose = require('mongoose');
+const multer = require('multer');
+const path = require('path');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+
+const app = express();
+const PORT = 3000;
+
+// MongoDB connection
+mongoose.connect('mongodb://localhost:27017/musiccloud', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+
+// Models
+const User = require('./models/User');
+const Music = require('./models/Music');
+const Playlist = require('./models/Playlist');
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(session({ secret: 'musiccloudsecret', resave: false, saveUninitialized: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Multer setup for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'public/uploads/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
+
+// Auth routes
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).send('Missing fields');
+  const exists = await User.findOne({ username });
+  if (exists) return res.status(409).send('User exists');
+  const hashed = await bcrypt.hash(password, 10);
+  const user = new User({ username, password: hashed });
+  await user.save();
+  res.sendStatus(200);
+});
+
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+  if (user && await bcrypt.compare(password, user.password)) {
+    req.session.user = user._id;
+    res.sendStatus(200);
+  } else {
+    res.sendStatus(401);
+  }
+});
+
+app.post('/logout', (req, res) => {
+  req.session.destroy(() => res.sendStatus(200));
+});
+
+// Upload music
+app.post('/upload', upload.single('music'), async (req, res) => {
+  if (!req.session.user) return res.sendStatus(401);
+  const { title, artist, genre } = req.body;
+  if (!req.file) return res.status(400).send('No file');
+  const filePath = '/uploads/' + req.file.filename;
+  const music = new Music({ title, artist, genre, filePath, user: req.session.user });
+  await music.save();
+  res.sendStatus(200);
+});
+
+// Catalog
+app.get('/catalog', async (req, res) => {
+  const music = await Music.find().sort({ _id: -1 });
+  res.json(music);
+});
+
+// Playlists
+app.post('/playlist', async (req, res) => {
+  if (!req.session.user) return res.sendStatus(401);
+  const { name, tracks } = req.body;
+  const playlist = new Playlist({ name, tracks, user: req.session.user });
+  await playlist.save();
+  res.sendStatus(200);
+});
+
+app.get('/playlists', async (req, res) => {
+  if (!req.session.user) return res.sendStatus(401);
+  const playlists = await Playlist.find({ user: req.session.user }).populate('tracks');
+  res.json(playlists);
+});
+
+app.listen(PORT, () => {
+  console.log(`Music Cloud running at http://localhost:${PORT}`);
+});
