@@ -1,64 +1,96 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mix Music Cloud — Full App (Username Auth, Subscriber, Artwork)</title>
+
+<!-- music-metadata-browser for reading embedded artwork -->
+<script src="https://unpkg.com/music-metadata-browser/dist/music-metadata-browser.umd.js"></script>
+
+<!-- Google AdSense placeholder (replace data-ad-slot with your slot id) -->
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1335151788577064"
-     crossorigin="anonymous"></script>  
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mix Music Cloud</title>
+     crossorigin="anonymous"></script>
+
 <style>
-  :root {
+  :root{
     --bg:#0b0f1a; --bg2:#0e1424; --panel:#121a2b; --text:#e6eef7; --muted:#9fb3c8;
     --accent:#6ee7ff; --accent2:#a78bfa; --radius:12px; --shadow:0 10px 30px rgba(0,0,0,.35);
+    --transition-medium:360ms;
   }
-  * { box-sizing:border-box }
-  body { margin:0; font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#0b0f1a; color:var(--text); }
-  .app {
-    display:grid; grid-template-columns:220px 1fr; grid-template-rows:auto 1fr 90px;
-    grid-template-areas:"sidebar header" "sidebar main" "player player"; height:100vh;
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:grid;grid-template-columns:260px 1fr;grid-template-rows:auto auto 1fr 110px;grid-template-areas:"sidebar header" "sidebar banner" "sidebar main" "player player";min-height:100vh}
+  @media (max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:auto auto 1fr 110px;grid-template-areas:"header" "banner" "main" "player"}aside{display:none}}
+  header{grid-area:header;display:flex;align-items:center;gap:12px;padding:12px;background:rgba(255,255,255,.04)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+  .logo{width:32px;height:32px;border-radius:50%;background:conic-gradient(from 210deg,var(--accent),var(--accent2))}
+  .searchbar{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .searchbar input{width:220px;padding:8px;border-radius:8px;border:1px solid #24304f;background:#0f1628;color:var(--text)}
+  .searchbar button{padding:8px 12px;border:none;border-radius:8px;background:#1f2b52;color:var(--accent);font-weight:600;cursor:pointer}
+  aside{grid-area:sidebar;background:var(--bg2);padding:12px;overflow:auto}
+  .nav-btn{display:block;width:100%;margin:6px 0;padding:10px;background:#0f1628;color:var(--text);border:none;border-radius:10px;cursor:pointer;text-align:left}
+  .nav-btn.active{outline:2px solid var(--accent)}
+  .banner{grid-area:banner;padding:8px 12px;display:flex;flex-direction:column;gap:12px;background:linear-gradient(90deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))}
+  .banner-row{display:flex;align-items:center;gap:12px}
+  .banner .img{width:100%;height:140px;border-radius:12px;overflow:hidden;background:#08101a;display:flex;align-items:center;justify-content:center;position:relative}
+  .banner .img img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transform:scale(1.02);transition:opacity var(--transition-medium) ease, transform var(--transition-medium) ease}
+  .banner .img img.visible{opacity:1;transform:scale(1)}
+  .banner .img .placeholder{color:var(--muted)}
+  .banner .controls{display:flex;gap:8px;align-items:center;margin-left:12px}
+  main{grid-area:main;padding:12px;overflow:auto}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+  .card{background:#0f1628;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .card-body{padding:10px}
+  .title{font-weight:700}
+  .meta{color:var(--muted);font-size:.9rem}
+  .btn{padding:6px 10px;border-radius:8px;border:none;background:#1a2440;color:var(--text);cursor:pointer}
+  .btn.primary{background:#1f2b52;color:var(--accent);font-weight:600}
+  .player{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;padding:12px;background:var(--panel);z-index:10000;box-shadow:0 -6px 30px rgba(0,0,0,0.6)}
+  .app { padding-bottom: 96px; }
+  .mini{display:flex;align-items:center;gap:10px}
+  .mini img{width:56px;height:56px;border-radius:10px;object-fit:cover;background:#0b1220}
+  .controls{display:flex;gap:8px;align-items:center}
+  .seek{display:flex;align-items:center;gap:8px}
+  input[type="range"]{accent-color:var(--accent)}
+  .form-grid{display:grid;gap:8px;grid-template-columns:1fr;margin-top:8px}
+  input[type="text"],input[type="file"],input[type="password"]{padding:8px;border-radius:8px;border:1px solid #24304f;background:#0f1628;color:var(--text);width:100%}
+  .thumb{width:100%;height:100px;object-fit:cover;border-radius:8px;background:#08101a;display:block}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted);font-size:.9rem}
+  .dropzone{border:2px dashed #24304f;padding:12px;border-radius:8px;text-align:center;color:var(--muted);background:rgba(255,255,255,0.01)}
+  .hidden{display:none}
+  .small{font-size:.85rem;color:var(--muted)}
+  .player-screen{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;opacity:0;pointer-events:none;transform:scale(0.98);transition:opacity var(--transition-medium) ease,transform var(--transition-medium) ease}
+  .player-screen.open{opacity:1;pointer-events:auto;transform:scale(1)}
+  .player-screen .card{width:min(900px,95%);max-height:90vh;overflow:auto;padding:18px;display:flex;gap:18px;align-items:center;background:linear-gradient(180deg,#0f1628,#0b1220);border-radius:12px}
+  .player-screen .art{width:48%;min-width:260px}
+  .player-screen .art img{width:100%;height:auto;border-radius:12px;display:block}
+  .player-screen .info{flex:1;display:flex;flex-direction:column;gap:12px}
+  @media (prefers-reduced-motion: reduce){
+    .banner .img img{transition:none}
+    .player-screen{transition:none}
   }
-  @media (max-width: 900px) {
-    .app { grid-template-columns:1fr; grid-template-areas:"header" "main" "player"; }
-    aside { display:none; }
-  }
-  header { grid-area:header; display:flex; align-items:center; gap:12px; padding:12px; background:rgba(255,255,255,.04); }
-  .brand { display:flex; align-items:center; gap:10px; font-weight:700; }
-  .logo { width:32px; height:32px; border-radius:50%; background:conic-gradient(from 210deg, var(--accent), var(--accent2)); }
-  .searchbar { margin-left:auto; display:flex; gap:8px; }
-  .searchbar input { width:220px; padding:8px; border-radius:8px; border:1px solid #24304f; background:#0f1628; color:var(--text); }
-  .searchbar button { padding:8px 12px; border:none; border-radius:8px; background:#1f2b52; color:var(--accent); font-weight:600; cursor:pointer; }
-  .userbox { margin-left:8px; display:flex; align-items:center; gap:8px; }
-  .userbox .nick { font-weight:700; }
-  aside { grid-area:sidebar; background:var(--bg2); padding:12px; overflow:auto; }
-  .nav-btn { display:block; width:100%; margin:6px 0; padding:10px; background:#0f1628; color:var(--text); border:none; border-radius:10px; cursor:pointer; text-align:left; }
-  .nav-btn.active { outline:2px solid var(--accent); }
-  main { grid-area:main; padding:12px; overflow:auto; }
-  .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); }
-  .card { background:#0f1628; border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
-  .card-body { padding:10px; }
-  .title { font-weight:700; }
-  .meta { color:var(--muted); font-size:.9rem; }
-  .btn { padding:6px 10px; border-radius:8px; border:none; background:#1a2440; color:var(--text); cursor:pointer; }
-  .btn.primary { background:#1f2b52; color:var(--accent); font-weight:600; }
-  .player {
-    grid-area:player; display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:12px;
-    padding:12px; background:var(--panel);
-  }
-  .mini { display:flex; align-items:center; gap:10px; }
-  .mini img { width:56px; height:56px; border-radius:10px; object-fit:cover; }
-  .controls { display:flex; gap:8px; }
-  .seek { display:flex; align-items:center; gap:8px; }
-  input[type="range"] { accent-color: var(--accent); }
-  .form-grid { display:grid; gap:8px; grid-template-columns:1fr; margin-top:8px; }
-  input[type="text"], input[type="email"], input[type="password"], input[type="url"], input[type="file"] {
-    padding:8px; border-radius:8px; border:1px solid #24304f; background:#0f1628; color:var(--text);
-  }
-  .folder-card { cursor:pointer; }
-  .folder-card img { width:100%; height:100px; object-fit:cover; }
-  .badge { position:absolute; bottom:6px; right:6px; font-size:1.2rem; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; }
-  .link { color:var(--accent); text-decoration:none; }
-  .auth { display:flex; gap:8px; }
+
+  .player-panel{grid-area:banner;margin-top:8px;display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;background:linear-gradient(90deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:var(--shadow)}
+  .player-panel.hidden{display:none}
+  .player-panel .art{width:84px;height:84px;border-radius:8px;overflow:hidden;background:#08101a;flex:0 0 84px}
+  .player-panel .art img{width:100%;height:100%;object-fit:cover;display:block}
+  .player-panel .info{flex:1;min-width:0}
+  .player-panel .info .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .player-panel .info .meta{color:var(--muted);font-size:.9rem}
+  .player-panel .controls{display:flex;gap:8px;align-items:center}
+  #panelVisualizer{width:140px;height:36px;border-radius:4px;background:transparent;display:block}
+  .vis-toggle{padding:6px 8px;border-radius:8px;background:#162033;color:var(--accent);border:1px solid rgba(255,255,255,0.03);cursor:pointer}
+
+  .player-view { display:flex; gap:18px; align-items:flex-start; }
+  .player-view .left { flex: 0 0 360px; }
+  .player-view .left img { width:100%; border-radius:12px; object-fit:cover; background:#08101a; }
+  .player-view .right { flex:1; display:flex; flex-direction:column; gap:12px; }
+  .back-btn { align-self:flex-start; }
+  .sign-prompt { margin-top:12px;padding:12px;border-radius:8px;background:#fff7e6;border:1px solid #f0dca8;color:#222 }
+  .sidebar-sub { margin-top:12px; display:flex; gap:8px; align-items:center; }
+  .muted-note { font-size:0.85rem;color:#cbd8e6;margin-top:8px }
 </style>
 </head>
 <body>
@@ -67,28 +99,68 @@
     <div class="brand"><div class="logo" aria-hidden="true"></div><div>Mix Music Cloud</div></div>
     <div class="searchbar">
       <label for="searchInput" class="sr-only" style="position:absolute;left:-9999px;">Search</label>
-      <input id="searchInput" type="text" placeholder="Search title, artist, genre…" />
+      <input id="searchInput" type="text" placeholder="Search title, artist…" />
       <button id="searchBtn" aria-label="Search">Search</button>
+      <button id="bannerToggle" class="btn" title="Toggle banner">Toggle Banner</button>
     </div>
-    <div class="userbox" id="userBox">
-      <button class="btn" id="loginBtn">Log in</button>
-      <button class="btn" id="signupBtn">Sign up</button>
-    </div>
+    <div class="userbox" id="userBox"></div>
   </header>
+
+  <div class="banner" id="banner">
+    <div class="banner-row">
+      <div class="img" id="bannerImgContainer">
+        <div class="placeholder muted" id="bannerPlaceholder">No banner image</div>
+      </div>
+      <div class="controls">
+        <div class="small">Banner updates from current track or iTunes search</div>
+        <button id="bannerRefresh" class="btn">Refresh</button>
+      </div>
+    </div>
+
+    <div id="playerPanel" class="player-panel hidden" aria-hidden="true">
+      <div class="art"><img id="panelArt" src="" alt="Now playing" /></div>
+      <div class="info">
+        <div id="panelTitle" class="title">Idle</div>
+        <div id="panelMeta" class="meta">—</div>
+      </div>
+      <div class="controls">
+        <canvas id="panelVisualizer" width="140" height="36" aria-hidden="true"></canvas>
+        <button id="visToggle" class="vis-toggle" title="Toggle visualizer mode">Spectrum</button>
+        <button id="panelPlay" class="btn">▶</button>
+        <button id="panelOpen" class="btn">Open</button>
+      </div>
+    </div>
+  </div>
 
   <aside>
     <button class="nav-btn" data-view="home">Home</button>
     <button class="nav-btn" data-view="catalog">Catalog</button>
     <button class="nav-btn" data-view="uploads">Uploads</button>
     <button class="nav-btn" data-view="playlists">Playlists</button>
-    <button class="nav-btn" data-view="trending">Trending</button>
-    <button class="nav-btn" data-view="featured">Featured Music</button>
-    <button class="nav-btn" data-view="updates">Manage Updates</button>
-    <button class="nav-btn" data-view="featuredAnnouncements">Featured Announcements</button>
-    <button class="nav-btn" data-view="gamesLinks">Games</button>
+    <button class="nav-btn" data-view="trash">Trash</button>
+
     <div style="margin-top:12px;">
       <div class="title">Support us</div>
       <button id="donatePayPal" class="btn primary">Donate via PayPal</button>
+
+      <div class="sidebar-sub">
+        <div class="small muted">Subscribers</div>
+        <div id="subscriberCount" class="title">0</div>
+        <button id="subscribeBtn" class="btn">Subscribe</button>
+      </div>
+      <div class="muted-note">You must sign in to subscribe. Click Subscribe to be prompted.</div>
+
+      <div class="ads-slot" style="margin-top:12px">
+        <ins class="adsbygoogle"
+             style="display:block"
+             data-ad-client="ca-pub-1335151788577064"
+             data-ad-slot="REPLACE_WITH_YOUR_SLOT"
+             data-ad-format="auto"
+             data-full-width-responsive="true"></ins>
+        <script>
+          (adsbygoogle = window.adsbygoogle || []).push({});
+        </script>
+      </div>
     </div>
   </aside>
 
@@ -102,459 +174,1054 @@
         <div id="nowMeta" class="meta">—</div>
       </div>
     </div>
+
     <div class="controls">
       <button class="btn" id="prevBtn" aria-label="Previous">⏮</button>
       <button class="btn" id="playPauseBtn" aria-label="Play or pause">▶</button>
       <button class="btn" id="nextBtn" aria-label="Next">⏭</button>
+      <button class="btn" id="openPlayerScreen" title="Open player screen">Open Player</button>
     </div>
+
     <div class="seek">
       <span id="curTime">0:00</span>
       <input id="seekRange" type="range" min="0" max="100" value="0" />
       <span id="durTime">0:00</span>
       🔊 <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume" />
     </div>
-    <audio id="audio"></audio>
+
+    <audio id="audio" preload="metadata"></audio>
+  </div>
+</div>
+
+<!-- Player screen modal -->
+<div id="playerScreen" class="player-screen" aria-hidden="true" role="dialog">
+  <div class="card" role="document">
+    <div class="art">
+      <img id="playerArt" src="" alt="Track artwork" />
+    </div>
+    <div class="info">
+      <div>
+        <div id="playerTitle" class="title">Title</div>
+        <div id="playerArtist" class="meta">Artist</div>
+      </div>
+      <div class="row">
+        <button id="psPrev" class="btn">⏮ Prev</button>
+        <button id="psPlay" class="btn primary">Play</button>
+        <button id="psNext" class="btn">Next ⏭</button>
+        <button id="psClose" class="btn">Close</button>
+      </div>
+      <div class="row">
+        <span id="psCurTime">0:00</span>
+        <input id="psSeek" type="range" min="0" max="100" value="0" />
+        <span id="psDurTime">0:00</span>
+      </div>
+      <div class="small muted">Player screen follows playback. Press Esc to close.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Upload sign-in prompt modal (shown only when uploading or subscribing and not signed in) -->
+<div id="uploadSignModal" class="player-screen" aria-hidden="true" role="dialog" style="background:rgba(0,0,0,0.6)">
+  <div class="card" role="document" style="max-width:420px;flex-direction:column">
+    <h3 style="margin:0 0 8px 0">Sign in to continue</h3>
+    <div class="small muted">You must sign in with a username and password to upload tracks or subscribe.</div>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+      <input id="modal_username" type="text" placeholder="Username" />
+      <input id="modal_password" type="password" placeholder="Password" />
+      <div style="display:flex;gap:8px">
+        <button id="modal_login" class="btn primary">Log in</button>
+        <button id="modal_signup" class="btn">Sign up</button>
+        <button id="modal_close" class="btn">Close</button>
+      </div>
+      <div id="modal_msg" class="small muted"></div>
+    </div>
   </div>
 </div>
 
 <script>
-/* --- Persistence --- */
-const store = {
-  get: (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f; } catch { return f; } },
-  set: (k, v) => localStorage.setItem(k, JSON.stringify(v))
+/* Full single-file app:
+   - Username/password signup & login (IndexedDB)
+   - Only prompt to sign in when user attempts to upload or subscribe
+   - Subscriber counter persisted in localStorage and requires login
+   - Artwork extraction from uploaded audio using music-metadata-browser
+   - Banner, panel, mini and player screen covers synchronized
+   - Visualizer, playlists, comments, downloads, IndexedDB storage
+   - Demo-only cryptographic PBKDF2-based hash for password storage (not production-grade)
+*/
+
+/* ---------- Defaults ---------- */
+const DEFAULT_BANNER_SVG = encodeURIComponent(`
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='400' viewBox='0 0 1200 400'>
+  <defs>
+    <linearGradient id='g' x1='0' x2='1'>
+      <stop offset='0' stop-color='#0f1724'/>
+      <stop offset='1' stop-color='#0b1220'/>
+    </linearGradient>
+  </defs>
+  <rect width='100%' height='100%' fill='url(#g)'/>
+  <g fill='#6ee7ff' opacity='0.12'>
+    <circle cx='200' cy='200' r='120'/>
+    <circle cx='600' cy='200' r='160'/>
+    <circle cx='1000' cy='200' r='120'/>
+  </g>
+  <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#9fb3c8' font-family='Arial,Helvetica,sans-serif' font-size='36'>Mix Music Cloud</text>
+</svg>
+`);
+const DEFAULT_BANNER = `data:image/svg+xml;charset=utf-8,${DEFAULT_BANNER_SVG}`;
+
+/* ---------- IndexedDB setup ---------- */
+const DB_NAME = "mixmusic_full_db_v1";
+const DB_VERSION = 2;
+const STORE_USERS = "users";
+const STORE_META = "tracks_meta";
+const STORE_BLOB = "tracks_blob";
+const STORE_COVERS = "covers_blob";
+const STORE_PLAYLISTS = "playlists";
+const STORE_TRASH = "trash_meta";
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error("IndexedDB not supported"));
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_USERS)) {
+        const u = db.createObjectStore(STORE_USERS, { keyPath: "id", autoIncrement: true });
+        u.createIndex("username", "username", { unique: true });
+      }
+      if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(STORE_BLOB)) db.createObjectStore(STORE_BLOB, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(STORE_COVERS)) db.createObjectStore(STORE_COVERS, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(STORE_PLAYLISTS)) db.createObjectStore(STORE_PLAYLISTS, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(STORE_TRASH)) db.createObjectStore(STORE_TRASH, { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbPut(storeName, value) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).put(value);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbAdd(storeName, value) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readwrite");
+    const st = tx.objectStore(storeName);
+    const r = st.add(value);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbGetAll(storeName) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => res(req.result || []);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbGet(storeName, key) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).get(key);
+    req.onsuccess = () => res(req.result || null);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbFindByIndex(storeName, indexName, value) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readonly");
+    const st = tx.objectStore(storeName);
+    const idx = st.index(indexName);
+    const r = idx.get(value);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbDelete(storeName, key) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* ---------- Local storage helper ---------- */
+const localStore = {
+  get: (k, fallback) => { try { const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn("localStorage set failed", e); } }
 };
 
-/* --- State --- */
+/* ---------- App state & DOM refs ---------- */
 const state = {
-  tracks: store.get("mc_tracks", []),
-  playlists: store.get("mc_playlists", []),
-  updates: store.get("mc_updates", []),
-  users: store.get("mc_users", []),       // [{email, nick, passHash}]
-  session: store.get("mc_session", null), // {email, nick}
+  tracks: [],
+  playlists: [],
+  trash: [],
+  audioUrls: {},
+  coverUrls: {},
   currentIndex: -1,
   isPlaying: false,
   view: "home",
-  search: ""
-};
-/* Persist but do not store transient blob: object URLs. For persistent storage you should use IndexedDB or a backend. */
-function persist() {
-  // create a safe copy of tracks for storage (strip blob: object URLs)
-  const tracksToStore = state.tracks.map(t => {
-    const copy = Object.assign({}, t);
-    if (copy.src && copy.src.startsWith && copy.src.startsWith('blob:')) delete copy.src;
-    return copy;
-  });
-  store.set("mc_tracks", tracksToStore);
-  store.set("mc_playlists", state.playlists);
-  store.set("mc_updates", state.updates);
-  store.set("mc_users", state.users);
-  store.set("mc_session", state.session);
-}
-
-/* --- Genre helpers --- */
-const genreImages = {
-  rock: "https://picsum.photos/seed/rockFolder/200/200",
-  jazz: "https://picsum.photos/seed/jazzFolder/200/200",
-  electronic: "https://picsum.photos/seed/electronicFolder/200/200",
-  pop: "https://picsum.photos/seed/popFolder/200/200",
-  classical: "https://picsum.photos/seed/classicalFolder/200/200",
-  hiphop: "https://picsum.photos/seed/hiphopFolder/200/200",
-  metal: "https://picsum.photos/seed/metalFolder/200/200",
-  unsorted: "https://picsum.photos/seed/unsortedFolder/200/200"
-};
-function defaultCoverForGenre(genre, id) {
-  const g = (genre || "unsorted").toLowerCase();
-  return genreImages[g] || genreImages.unsorted;
-}
-function genreBadge(genre) {
-  const g = (genre || "").toLowerCase();
-  if (g.includes("rock")) return "🎸";
-  if (g.includes("jazz")) return "🎷";
-  if (g.includes("electronic")) return "🎛️";
-  if (g.includes("pop")) return "🎤";
-  if (g.includes("classical")) return "🎹";
-  if (g.includes("hip")) return "🎧";
-  if (g.includes("metal")) return "🤘";
-  return "🎵";
-}
-function groupTracksByGenre() {
-  const folders = {};
-  state.tracks.forEach(t => {
-    const g = ((t.genre || "unsorted").toLowerCase());
-    if (!folders[g]) folders[g] = [];
-    folders[g].push(t);
-  });
-  return folders;
-}
-
-/* --- Auth (local-only) --- */
-/* NOTE: Client-side auth is for demo only. Do not use for production.
-   Prefer a backend with secure password hashing (bcrypt/argon2) and proper session handling. */
-
-/* Better demo hash using Web Crypto (SHA-256). Still not a replacement for server-side password hashing. */
-async function hash(s) {
-  try {
-    const enc = new TextEncoder();
-    const data = enc.encode(s);
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch (e) {
-    // fallback to simple non-crypto hash if Web Crypto unavailable
-    let h = 0; for (let i=0;i<s.length;i++) h = (h<<5)-h + s.charCodeAt(i); return String(h);
-  }
-}
-async function signup(email, pass, nick) {
-  email = email.trim().toLowerCase();
-  if (!email || !pass || !nick) return { ok:false, msg:"All fields required." };
-  if (state.users.find(u => u.email === email)) return { ok:false, msg:"Email already registered." };
-  const passHash = await hash(pass);
-  state.users.push({ email, passHash, nick });
-  state.session = { email, nick };
-  persist();
-  return { ok:true };
-}
-async function login(email, pass) {
-  email = email.trim().toLowerCase();
-  const u = state.users.find(u => u.email === email);
-  const ph = await hash(pass);
-  if (!u || u.passHash !== ph) return { ok:false, msg:"Invalid credentials." };
-  state.session = { email, nick: u.nick };
-  persist();
-  return { ok:true };
-}
-function logout() { state.session = null; persist(); renderUserBox(); }
-
-/* --- UI: user box --- */
-function renderUserBox() {
-  const box = document.getElementById("userBox");
-  box.innerHTML = "";
-  if (state.session) {
-    const nick = document.createElement("span");
-    nick.className = "nick";
-    nick.textContent = state.session.nick;
-    const out = document.createElement("button");
-    out.className = "btn";
-    out.textContent = "Log out";
-    out.onclick = () => { logout(); };
-    box.append(nick, out);
-  } else {
-    const loginBtn = document.createElement("button");
-    loginBtn.className = "btn"; loginBtn.textContent = "Log in";
-    loginBtn.onclick = () => showAuth("login");
-    const signupBtn = document.createElement("button");
-    signupBtn.className = "btn"; signupBtn.textContent = "Sign up";
-    signupBtn.onclick = () => showAuth("signup");
-    box.append(loginBtn, signupBtn);
-  }
-}
-function showAuth(mode) {
-  const vc = document.getElementById("viewContainer");
-  vc.innerHTML = "";
-  const card = document.createElement("div"); card.className = "card";
-  const body = document.createElement("div"); body.className = "card-body";
-  const title = document.createElement("div"); title.className = "title";
-  title.textContent = mode === "login" ? "Log in" : "Sign up";
-  const form = document.createElement("div"); form.className = "form-grid";
-  const email = document.createElement("input"); email.type="email"; email.placeholder="Email";
-  const pass = document.createElement("input"); pass.type="password"; pass.placeholder="Password";
-  form.append(email, pass);
-  let nick;
-  if (mode === "signup") { nick = document.createElement("input"); nick.type="text"; nick.placeholder="Nickname"; form.append(nick); }
-  const row = document.createElement("div"); row.className="row";
-  const submit = document.createElement("button"); submit.className="btn primary"; submit.textContent = mode === "login" ? "Log in" : "Create account";
-  const cancel = document.createElement("button"); cancel.className="btn"; cancel.textContent="Cancel";
-  cancel.onclick = () => render();
-  submit.onclick = async () => {
-    // login/signup are async now
-    const res = mode === "login" ? await login(email.value, pass.value) : await signup(email.value, pass.value, nick ? nick.value : "");
-    if (!res.ok) { alert(res.msg); return; }
-    renderUserBox(); render();
-  };
-  row.append(submit, cancel);
-  body.append(title, form, row);
-  card.append(body); vc.append(card);
-}
-
-/* --- Navigation --- */
-function setActiveNav(view) {
-  document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
-}
-document.querySelectorAll(".nav-btn").forEach(btn => {
-  btn.onclick = () => { state.view = btn.dataset.view; setActiveNav(state.view); render(); };
-});
-document.getElementById("donatePayPal").onclick = () => {
-  const w = window.open("https://freedomigame.kesug.com/?i=1", "_blank");
-  if (w) try { w.opener = null; } catch(e){ /* ignore */ }
+  prevView: null,
+  search: "",
+  volume: localStore.get("mc_volume", 0.8),
+  lastUsedUrls: new Set(),
+  currentUser: localStore.get("mmc_demo_user", null)
 };
 
-/* --- Search --- */
-document.getElementById("searchBtn").onclick = () => { state.search = (document.getElementById("searchInput").value || "").trim().toLowerCase(); render(); };
-document.getElementById("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") { state.search = (e.target.value || "").trim().toLowerCase(); render(); } });
-
-/* --- Cards --- */
-function trackCard(t) {
-  const card = document.createElement("div"); card.className = "card";
-  const coverWrap = document.createElement("div"); coverWrap.style.position="relative";
-  const cover = document.createElement("img");
-  cover.src = t.cover && t.cover.trim() ? t.cover : defaultCoverForGenre(t.genre, t.id);
-  cover.alt = t.title || "Track cover";
-  cover.style.width="100%"; cover.style.height="140px"; cover.style.objectFit="cover";
-  const badge = document.createElement("div"); badge.className="badge"; badge.textContent = genreBadge(t.genre);
-  coverWrap.append(cover, badge);
-  const body = document.createElement("div"); body.className="card-body";
-  const title = document.createElement("div"); title.className="title"; title.textContent = t.title || "Untitled";
-  const meta = document.createElement("div"); meta.className="meta"; meta.textContent = `${t.artist || "Unknown"} • ${t.genre || "Unsorted"} • ${t.plays || 0} plays`;
-  const row = document.createElement("div"); row.className="row";
-  const play = document.createElement("button"); play.className="btn primary"; play.textContent="Play"; play.onclick = () => playTrackById(t.id);
-  const like = document.createElement("button"); like.className="btn"; like.textContent = `❤ ${t.likes || 0}`; like.onclick = () => { t.likes = (t.likes||0)+1; persist(); render(); };
-  row.append(play, like);
-  body.append(title, meta, row);
-  card.append(coverWrap, body);
-  return card;
-}
-
-/* --- Views --- */
-function renderHome() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Genre folders";
-  const grid = document.createElement("div"); grid.className="grid";
-  const folders = groupTracksByGenre();
-  Object.keys(genreImages).forEach(g => {
-    const card = document.createElement("div"); card.className="card folder-card";
-    const img = document.createElement("img"); img.src = genreImages[g];
-    const body = document.createElement("div"); body.className="card-body";
-    const t = document.createElement("div"); t.className="title"; t.textContent = g.toUpperCase();
-    const m = document.createElement("div"); m.className="meta"; m.textContent = `${(folders[g]||[]).length} tracks`;
-    body.append(t, m); card.append(img, body);
-    card.onclick = () => renderFolderTracks(g, folders[g]||[]);
-    grid.append(card);
-  });
-  wrap.append(title, grid);
-  return wrap;
-}
-function renderFolderTracks(genre, tracks) {
-  const wrap = document.createElement("div");
-  const row = document.createElement("div"); row.className="row";
-  const back = document.createElement("button"); back.className="btn"; back.textContent="← Back to folders"; back.onclick = () => { state.view="home"; setActiveNav(state.view); render(); };
-  const title = document.createElement("div"); title.className="title"; title.textContent = `${genre.toUpperCase()} — ${tracks.length} tracks`;
-  row.append(back, title); wrap.append(row);
-  const grid = document.createElement("div"); grid.className="grid";
-  const q = state.search;
-  tracks.filter(t => {
-    const hay = ((t.title||"") + (t.artist||"") + (t.genre||"")).toLowerCase();
-    return !q || hay.includes(q);
-  }).forEach(t => grid.append(trackCard(t)));
-  wrap.append(grid);
-  const vc = document.getElementById("viewContainer"); vc.innerHTML=""; vc.append(wrap);
-}
-function renderCatalog() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Catalog";
-  const grid = document.createElement("div"); grid.className="grid";
-  const q = state.search;
-  state.tracks.filter(t => {
-    const hay = ((t.title||"") + (t.artist||"") + (t.genre||"")).toLowerCase();
-    return !q || hay.includes(q);
-  }).forEach(t => grid.append(trackCard(t)));
-  wrap.append(title, grid); return wrap;
-}
-function renderUploads() {
-  const wrap = document.createElement("div");
-  const card = document.createElement("div"); card.className="card";
-  const body = document.createElement("div"); body.className="card-body";
-  const title = document.createElement("div"); title.className="title"; title.textContent="Upload a track";
-  const form = document.createElement("div"); form.className="form-grid";
-  const fileInput = document.createElement("input"); fileInput.type="file"; fileInput.accept="audio/mp3,audio/mpeg";
-  const titleInput = document.createElement("input"); titleInput.type="text"; titleInput.placeholder="Title";
-  const artistInput = document.createElement("input"); artistInput.type="text"; artistInput.placeholder="Artist";
-  const genreInput = document.createElement("input"); genreInput.type="text"; genreInput.placeholder="Genre (e.g., Rock, Jazz)";
-  const coverInput = document.createElement("input"); coverInput.type="url"; coverInput.placeholder="Cover URL (optional)";
-  const submit = document.createElement("button"); submit.className="btn primary"; submit.textContent="Upload";
-  submit.onclick = () => {
-    if (!fileInput.files.length) { alert("Please select an MP3 file."); return; }
-    const file = fileInput.files[0];
-    // optional: validate MIME and size
-    if (!/audio/.test(file.type)) { if (!confirm("Selected file does not look like audio. Continue?")) return; }
-    if (file.size > 50 * 1024 * 1024) { if (!confirm("File is larger than 50MB. Continue?")) return; }
-    const src = URL.createObjectURL(file);
-    const id = "t" + Math.random().toString(36).slice(2,8);
-    const track = {
-      id,
-      title: titleInput.value.trim() || file.name,
-      artist: artistInput.value.trim() || "Unknown Artist",
-      genre: genreInput.value.trim() || "unsorted",
-      cover: coverInput.value.trim(),
-      src,               // transient blob URL, not persisted to localStorage
-      likes: 0,
-      plays: 0,
-      created: Date.now()
-    };
-    state.tracks.push(track); persist();
-    alert("Track uploaded successfully!");
-    state.view = "home"; setActiveNav(state.view); render();
-  };
-  form.append(fileInput, titleInput, artistInput, genreInput, coverInput, submit);
-  body.append(title, form); card.append(body); wrap.append(card); return wrap;
-}
-function renderPlaylists() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Playlists";
-  const meta = document.createElement("div"); meta.className="meta"; meta.textContent="(Placeholder) Create playlists in a future step.";
-  wrap.append(title, meta); return wrap;
-}
-function renderTrending() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Trending";
-  const grid = document.createElement("div"); grid.className="grid";
-  [...state.tracks].sort((a,b)=>(b.plays||0)-(a.plays||0)).slice(0,20).forEach(t=>grid.append(trackCard(t)));
-  wrap.append(title, grid); return wrap;
-}
-function renderFeaturedMusic() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Featured Music";
-  const grid = document.createElement("div"); grid.className="grid";
-  [...state.tracks].sort((a,b)=>(b.likes||0)-(a.likes||0)).slice(0,20).forEach(t=>grid.append(trackCard(t)));
-  wrap.append(title, grid); return wrap;
-}
-function renderUpdatesPanel() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Manage Updates";
-  wrap.append(title);
-  state.updates.forEach((u, idx) => {
-    const card = document.createElement("div"); card.className="card";
-    const body = document.createElement("div"); body.className="card-body";
-    const meta = document.createElement("div"); meta.className="meta"; meta.textContent = new Date(u.ts).toLocaleString();
-    const text = document.createElement("div"); text.textContent = u.text;
-    const del = document.createElement("button"); del.className="btn"; del.textContent="Delete";
-    del.onclick = () => { state.updates.splice(idx,1); persist(); render(); };
-    body.append(meta, text, del); card.append(body); wrap.append(card);
-  });
-  const input = document.createElement("input"); input.type="text"; input.placeholder="Write a new update…";
-  const add = document.createElement("button"); add.className="btn primary"; add.textContent="Add Update";
-  add.onclick = () => { if (!input.value.trim()) return; state.updates.push({ text: input.value.trim(), ts: Date.now() }); persist(); render(); };
-  wrap.append(input, add); return wrap;
-}
-function renderFeaturedAnnouncements() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Featured Announcements";
-  const grid = document.createElement("div"); grid.className="grid";
-  const featured = (state.updates||[]).slice(-3);
-  if (!featured.length) { const msg = document.createElement("div"); msg.className="meta"; msg.textContent="No featured announcements yet."; wrap.append(title, msg); return wrap; }
-  featured.forEach(u => {
-    const card = document.createElement("div"); card.className="card";
-    const body = document.createElement("div"); body.className="card-body";
-    const meta = document.createElement("div"); meta.className="meta"; meta.textContent = new Date(u.ts).toLocaleString();
-    const text = document.createElement("div"); text.className="title"; text.textContent = u.text;
-    body.append(meta, text); card.append(body); grid.append(card);
-  });
-  wrap.append(title, grid); return wrap;
-}
-function renderGamesLinks() {
-  const wrap = document.createElement("div");
-  const title = document.createElement("div"); title.className="title"; title.textContent="Games (external links)";
-  const list = document.createElement("div"); list.className="row";
-  const games = [
-    { name:"2048 Puzzle", url:"https://play2048.co/" },
-    { name:"Pac-Man", url:"https://pacman.live/" },
-    { name:"Tetris", url:"https://tetris.com/play-tetris" },
-    { name:"Snake Game", url:"https://playsnake.org/" }
-  ];
-  games.forEach(g => { const a = document.createElement("a"); a.href=g.url; a.target="_blank"; a.rel="noopener noreferrer"; a.className="link"; a.textContent=g.name; list.append(a); });
-  wrap.append(title, list); return wrap;
-}
-
-/* --- Player --- */
-const audio = document.getElementById("audio");
+const viewContainer = document.getElementById("viewContainer");
+const searchInput = document.getElementById("searchInput");
+const searchBtn = document.getElementById("searchBtn");
+const audioEl = document.getElementById("audio");
 const playPauseBtn = document.getElementById("playPauseBtn");
-const prevBtn = document.getElementById("prevBtn");
-const nextBtn = document.getElementById("nextBtn");
-const seekRange = document.getElementById("seekRange");
-const volRange = document.getElementById("volRange");
-const curTime = document.getElementById("curTime");
-const durTime = document.getElementById("durTime");
-const miniCover = document.getElementById("miniCover");
 const nowTitle = document.getElementById("nowTitle");
 const nowMeta = document.getElementById("nowMeta");
+const miniCover = document.getElementById("miniCover");
+const seekRange = document.getElementById("seekRange");
+const curTime = document.getElementById("curTime");
+const durTime = document.getElementById("durTime");
+const volRange = document.getElementById("volRange");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+const openPlayerScreenBtn = document.getElementById("openPlayerScreen");
 
-audio.volume = parseFloat(volRange.value || "0.8");
-const fmtTime = s => { if (!isFinite(s)) return "0:00"; const m = Math.floor(s/60); const r = Math.floor(s%60); return `${m}:${String(r).padStart(2,"0")}`; };
+const bannerImgContainer = document.getElementById("bannerImgContainer");
+const bannerPlaceholder = document.getElementById("bannerPlaceholder");
+const bannerRefresh = document.getElementById("bannerRefresh");
+const bannerToggle = document.getElementById("bannerToggle");
 
-function playTrackById(id) {
-  const idx = state.tracks.findIndex(t => t.id === id);
-  if (idx < 0) return;
-  state.currentIndex = idx;
-  const t = state.tracks[idx];
-  const cover = (t.cover && t.cover.trim()) ? t.cover : defaultCoverForGenre(t.genre, t.id);
-  if (!t.src) {
-    // no persisted or transient source — can't play. Notify user.
-    alert("This track has no playable source in this session. Re-upload or use a hosted URL.");
+const playerPanel = document.getElementById("playerPanel");
+const panelArt = document.getElementById("panelArt");
+const panelTitle = document.getElementById("panelTitle");
+const panelMeta = document.getElementById("panelMeta");
+const panelCanvas = document.getElementById("panelVisualizer");
+const visToggleBtn = document.getElementById("visToggle");
+
+const playerScreen = document.getElementById("playerScreen");
+const playerArt = document.getElementById("playerArt");
+const playerTitle = document.getElementById("playerTitle");
+const playerArtist = document.getElementById("playerArtist");
+
+const uploadSignModal = document.getElementById("uploadSignModal");
+const modalUsername = document.getElementById("modal_username");
+const modalPassword = document.getElementById("modal_password");
+const modalLoginBtn = document.getElementById("modal_login");
+const modalSignupBtn = document.getElementById("modal_signup");
+const modalCloseBtn = document.getElementById("modal_close");
+const modalMsg = document.getElementById("modal_msg");
+
+const subscriberCountEl = document.getElementById("subscriberCount");
+const subscribeBtn = document.getElementById("subscribeBtn");
+
+/* ---------- Utilities ---------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+const formatTime = s => { if (!s || isNaN(s)) return "0:00"; const m = Math.floor(s/60); const sec = Math.floor(s%60).toString().padStart(2,"0"); return `${m}:${sec}`; };
+const escapeHtml = s => String(s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- Load / Save ---------- */
+async function loadAll() {
+  try { const metas = await idbGetAll(STORE_META); state.tracks = metas.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)); } catch (e) { console.warn("Failed to load tracks", e); state.tracks = []; }
+  try { const pls = await idbGetAll(STORE_PLAYLISTS); state.playlists = pls.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)); } catch (e) { state.playlists = []; }
+  try { const trash = await idbGetAll(STORE_TRASH); state.trash = trash.sort((a,b) => (b.trashedAt||0) - (a.trashedAt||0)); } catch (e) { state.trash = []; }
+}
+
+/* ---------- Object URL management ---------- */
+async function ensureAudioUrl(id) {
+  if (state.audioUrls[id]) { state.lastUsedUrls.add(id); return state.audioUrls[id]; }
+  try {
+    const rec = await idbGet(STORE_BLOB, id);
+    if (!rec || !rec.blob) return null;
+    const url = URL.createObjectURL(rec.blob);
+    state.audioUrls[id] = url;
+    state.lastUsedUrls.add(id);
+    return url;
+  } catch (e) { console.error("ensureAudioUrl error", e); return null; }
+}
+async function ensureCoverUrl(coverId) {
+  if (!coverId) return DEFAULT_BANNER;
+  if (state.coverUrls[coverId]) return state.coverUrls[coverId];
+  try {
+    const rec = await idbGet(STORE_COVERS, coverId);
+    if (!rec || !rec.blob) return DEFAULT_BANNER;
+    const url = URL.createObjectURL(rec.blob);
+    state.coverUrls[coverId] = url;
+    return url;
+  } catch (e) { console.error("ensureCoverUrl error", e); return DEFAULT_BANNER; }
+}
+function revokeUnusedObjectUrls() {
+  const keep = new Set();
+  if (state.currentIndex >= 0 && state.tracks[state.currentIndex]) {
+    const id = state.tracks[state.currentIndex].id;
+    keep.add(id);
+    const c = state.tracks[state.currentIndex].coverId;
+    if (c) keep.add("cover_"+c);
+  }
+  state.lastUsedUrls.forEach(k => keep.add(k));
+  Object.keys(state.audioUrls).forEach(k => {
+    if (!keep.has(k)) {
+      try { URL.revokeObjectURL(state.audioUrls[k]); } catch {}
+      delete state.audioUrls[k];
+    }
+  });
+  state.lastUsedUrls.clear();
+}
+setInterval(revokeUnusedObjectUrls, 30000);
+
+/* ---------- Artwork extraction on upload ---------- */
+async function extractAndStoreArtwork(file) {
+  try {
+    const mm = window.musicMetadataBrowser;
+    if (!mm || !mm.parseBlob) return null;
+    const metadata = await mm.parseBlob(file);
+    const pictures = (metadata.common && metadata.common.picture) || [];
+    if (!pictures.length) return null;
+    const pic = pictures[0];
+    const blob = new Blob([pic.data], { type: pic.format || 'image/jpeg' });
+    const coverId = uid();
+    await idbPut(STORE_COVERS, { id: coverId, blob });
+    const url = URL.createObjectURL(blob);
+    state.coverUrls[coverId] = url;
+    return { coverId, coverUrl: url };
+  } catch (e) {
+    console.warn("Artwork extraction failed", e);
+    return null;
+  }
+}
+
+/* Add track from file: store meta and blob, extract artwork if present */
+async function addTrackFromFile(file, metadata = {}, uploader) {
+  const id = uid();
+  const art = await extractAndStoreArtwork(file);
+  const meta = {
+    id,
+    title: metadata.title || file.name,
+    artist: metadata.artist || (uploader ? uploader.username : ''),
+    originalName: file.name,
+    mimeType: file.type,
+    size: file.size,
+    createdAt: Date.now(),
+    coverUrl: art ? art.coverUrl : DEFAULT_BANNER,
+    coverId: art ? art.coverId : null,
+    comments: [],
+    likes: [],
+    plays: 0,
+    uploaderName: uploader ? uploader.username : 'Guest',
+    uploaderId: uploader ? uploader.id : null
+  };
+  const blobRec = { id, blob: file, name: file.name };
+  await idbPut(STORE_META, meta);
+  await idbPut(STORE_BLOB, blobRec);
+  await loadAll();
+  return meta;
+}
+
+/* ---------- Banner & cover sync ---------- */
+function setBannerImageSync(url, altText = "") {
+  const existingImgs = bannerImgContainer.querySelectorAll("img");
+  if (!url) {
+    existingImgs.forEach(img => { img.classList.remove("visible"); setTimeout(()=>img.remove(), 500); });
+    bannerImgContainer.innerHTML = "";
+    bannerImgContainer.appendChild(bannerPlaceholder);
+  } else {
+    bannerPlaceholder.remove();
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = altText || "Banner image";
+    img.onload = () => {
+      requestAnimationFrame(()=> img.classList.add("visible"));
+      const older = bannerImgContainer.querySelectorAll("img:not(:last-child)");
+      older.forEach(o => { o.classList.remove("visible"); setTimeout(()=>o.remove(), 500); });
+    };
+    img.onerror = () => { img.remove(); if (!bannerImgContainer.querySelector("img")) bannerImgContainer.appendChild(bannerPlaceholder); };
+    bannerImgContainer.appendChild(img);
+  }
+
+  if (url) {
+    panelArt.src = url;
+    miniCover.src = url;
+    playerArt.src = url;
+  } else {
+    panelArt.removeAttribute('src');
+    miniCover.removeAttribute('src');
+    playerArt.removeAttribute('src');
+  }
+}
+
+async function updateBannerForTrackOrSearch(trackMeta, searchTerm) {
+  if (trackMeta && trackMeta.coverUrl) {
+    if (trackMeta.coverId) {
+      const url = await ensureCoverUrl(trackMeta.coverId);
+      setBannerImageSync(url || DEFAULT_BANNER, `${trackMeta.title} — ${trackMeta.artist}`);
+      return;
+    }
+    setBannerImageSync(trackMeta.coverUrl || DEFAULT_BANNER, `${trackMeta.title} — ${trackMeta.artist}`);
     return;
   }
-  audio.src = t.src;
-  audio.play().then(() => {
-    state.isPlaying = true; playPauseBtn.textContent = "⏸";
-    miniCover.src = cover;
-    nowTitle.textContent = `${t.title || "Untitled"} ${genreBadge(t.genre)}`;
-    nowMeta.textContent = `${t.artist || "Unknown"} • ${t.genre || "Unsorted"}`;
-    t.plays = (t.plays || 0) + 1; persist();
-  }).catch(() => alert("Unable to play audio source."));
-}
-function playPause() {
-  if (state.currentIndex < 0) { const first = state.tracks[0]; if (first) playTrackById(first.id); return; }
-  if (state.isPlaying) { audio.pause(); state.isPlaying=false; playPauseBtn.textContent="▶"; }
-  else { audio.play(); state.isPlaying=true; playPauseBtn.textContent="⏸"; }
-}
-function next() { if (!state.tracks.length) return; state.currentIndex = (state.currentIndex + 1) % state.tracks.length; playTrackById(state.tracks[state.currentIndex].id); }
-function prev() { if (!state.tracks.length) return; state.currentIndex = (state.currentIndex - 1 + state.tracks.length) % state.tracks.length; playTrackById(state.tracks[state.currentIndex].id); }
-
-playPauseBtn.onclick = playPause; nextBtn.onclick = next; prevBtn.onclick = prev;
-volRange.oninput = () => audio.volume = parseFloat(volRange.value);
-audio.addEventListener("timeupdate", () => {
-  const cur = audio.currentTime || 0; const dur = audio.duration || 0;
-  curTime.textContent = fmtTime(cur); durTime.textContent = fmtTime(dur);
-  seekRange.value = dur > 0 ? Math.floor((cur / dur) * 100) : 0;
-});
-seekRange.oninput = () => { const dur = audio.duration || 0; if (dur > 0) { const pct = parseInt(seekRange.value,10)/100; audio.currentTime = dur * Math.min(Math.max(pct,0),1); } };
-audio.addEventListener("ended", () => next());
-document.addEventListener("keydown", e => {
-  // ignore typing and contenteditable
-  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
-  if (e.code === "Space") { e.preventDefault(); playPause(); }
-  if (e.code === "ArrowRight") audio.currentTime += 5;
-  if (e.code === "ArrowLeft") audio.currentTime -= 5;
-  if (e.code === "ArrowUp") audio.volume = Math.min(1, audio.volume + 0.05);
-  if (e.code === "ArrowDown") audio.volume = Math.max(0, audio.volume - 0.05);
-});
-
-/* --- Revoke blob object URLs on unload to avoid leaks --- */
-window.addEventListener('beforeunload', () => {
-  state.tracks.forEach(t => {
-    try { if (t.src && t.src.startsWith && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src); } catch(e){}
-  });
-});
-
-/* --- Root render --- */
-function render() {
-  const vc = document.getElementById("viewContainer"); vc.innerHTML = "";
-  let node;
-  switch (state.view) {
-    case "home": node = renderHome(); break;
-    case "catalog": node = renderCatalog(); break;
-    case "uploads": node = renderUploads(); break;
-    case "playlists": node = renderPlaylists(); break;
-    case "trending": node = renderTrending(); break;
-    case "featured": node = renderFeaturedMusic(); break;
-    case "updates": node = renderUpdatesPanel(); break;
-    case "featuredAnnouncements": node = renderFeaturedAnnouncements(); break;
-    case "gamesLinks": node = renderGamesLinks(); break;
-    default: node = renderHome();
+  const q = trackMeta ? `${trackMeta.title} ${trackMeta.artist}` : (searchTerm || "");
+  if (q) {
+    try {
+      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=1`);
+      const art = await res.json();
+      if (art && art.results && art.results[0] && art.results[0].artworkUrl100) {
+        const url = art.results[0].artworkUrl100.replace(/100x100bb.jpg|60x60bb.jpg|200x200bb.jpg/gi, "600x600bb.jpg");
+        setBannerImageSync(url, q);
+        return;
+      }
+    } catch (e) { /* ignore */ }
   }
-  vc.appendChild(node);
+  setBannerImageSync(DEFAULT_BANNER);
 }
 
-/* --- Init --- */
-state.view = "home"; setActiveNav(state.view); renderUserBox(); render();
+/* ---------- Player panel show/hide ---------- */
+function showPanelForTrack(track) {
+  if (!track) {
+    playerPanel.classList.add("hidden");
+    playerPanel.setAttribute("aria-hidden","true");
+    return;
+  }
+  panelTitle.textContent = track.title || "Untitled";
+  panelMeta.textContent = track.artist || "Unknown";
+  if (track.coverId) {
+    ensureCoverUrl(track.coverId).then(url => setBannerImageSync(url || DEFAULT_BANNER, `${track.title} — ${track.artist}`));
+  } else {
+    setBannerImageSync(track.coverUrl || DEFAULT_BANNER, `${track.title} — ${track.artist}`);
+  }
+  playerPanel.classList.remove("hidden");
+  playerPanel.setAttribute("aria-hidden","false");
+}
+function hidePanel() {
+  playerPanel.classList.add("hidden");
+  playerPanel.setAttribute("aria-hidden","true");
+}
+
+/* ---------- Simple auth (username + password) ---------- */
+async function deriveKey(password, salt, iterations=100000) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveBits','deriveKey']);
+  const key = await crypto.subtle.deriveKey({name:'PBKDF2', salt: enc.encode(salt), iterations, hash:'SHA-256'}, keyMaterial, {name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return btoa(String.fromCharCode(...new Uint8Array(raw)));
+}
+async function createUser(username, password) {
+  username = username.toLowerCase();
+  const existing = await idbFindByIndex(STORE_USERS, 'username', username);
+  if (existing) throw new Error('Username already taken');
+  const salt = crypto.getRandomValues(new Uint8Array(12)).reduce((s,n)=>s+('0'+n.toString(16)).slice(-2),'');
+  const passHash = await deriveKey(password, salt);
+  const user = { username, salt, passHash, createdAt: Date.now() };
+  const id = await idbAdd(STORE_USERS, user);
+  user.id = id;
+  return user;
+}
+async function verifyUser(username, password) {
+  username = username.toLowerCase();
+  const u = await idbFindByIndex(STORE_USERS, 'username', username);
+  if (!u) throw new Error('Invalid credentials');
+  const candidate = await deriveKey(password, u.salt);
+  if (candidate !== u.passHash) throw new Error('Invalid credentials');
+  return u;
+}
+
+/* ---------- Play controls ---------- */
+playPauseBtn.addEventListener("click", () => { if (!audioEl.src) return; if (audioEl.paused) audioEl.play(); else audioEl.pause(); });
+prevBtn.addEventListener("click", () => { if (!state.tracks.length) return; let idx = state.currentIndex - 1; if (idx < 0) idx = state.tracks.length - 1; playTrack(idx); });
+nextBtn.addEventListener("click", () => { if (!state.tracks.length) return; let idx = state.currentIndex + 1; if (idx >= state.tracks.length) idx = 0; playTrack(idx); });
+
+document.getElementById('psPlay').addEventListener('click', () => { if (!audioEl.src) return; if (audioEl.paused) audioEl.play(); else audioEl.pause(); });
+document.getElementById('psPrev').addEventListener('click', () => prevBtn.click());
+document.getElementById('psNext').addEventListener('click', () => nextBtn.click());
+document.getElementById('psClose').addEventListener('click', () => closePlayerScreen());
+openPlayerScreenBtn.addEventListener('click', () => openPlayerScreen());
+
+document.getElementById('panelPlay').addEventListener('click', () => { if (!audioEl.src) return; if (audioEl.paused) audioEl.play(); else audioEl.pause(); });
+document.getElementById('panelOpen').addEventListener('click', () => openPlayerScreen());
+
+audioEl.addEventListener("timeupdate", () => {
+  seekRange.max = Math.floor(audioEl.duration || 0);
+  seekRange.value = Math.floor(audioEl.currentTime || 0);
+  curTime.textContent = formatTime(audioEl.currentTime);
+  durTime.textContent = formatTime(audioEl.duration);
+  document.getElementById('psSeek').max = Math.floor(audioEl.duration || 0);
+  document.getElementById('psSeek').value = Math.floor(audioEl.currentTime || 0);
+  document.getElementById('psCurTime').textContent = formatTime(audioEl.currentTime);
+  document.getElementById('psDurTime').textContent = formatTime(audioEl.duration);
+});
+seekRange.addEventListener("input", () => { audioEl.currentTime = Number(seekRange.value); });
+document.getElementById('psSeek').addEventListener("input", () => { audioEl.currentTime = Number(document.getElementById('psSeek').value); });
+
+volRange.addEventListener("input", () => { const v = Number(volRange.value); audioEl.volume = v; state.volume = v; localStore.set("mc_volume", v); });
+
+audioEl.addEventListener("play", () => { state.isPlaying = true; playPauseBtn.textContent = "⏸"; document.getElementById('psPlay').textContent = "Pause"; document.getElementById('panelPlay').textContent = "⏸"; });
+audioEl.addEventListener("pause", () => { state.isPlaying = false; playPauseBtn.textContent = "▶"; document.getElementById('psPlay').textContent = "Play"; document.getElementById('panelPlay').textContent = "▶"; });
+
+/* ---------- Visualizer ---------- */
+let audioCtx = null;
+let analyser = null;
+let sourceNode = null;
+let animationId = null;
+let freqArray = null;
+let timeArray = null;
+let bufferLength = 0;
+let canvasCtx = panelCanvas.getContext('2d');
+const DPR = window.devicePixelRatio || 1;
+let visMode = localStore.get("mc_vis_mode", "spectrum");
+visToggleBtn.textContent = visMode === "spectrum" ? "Spectrum" : "Waveform";
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function setupAudioVisualizer() {
+  if (reduceMotion) return;
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    bufferLength = analyser.frequencyBinCount;
+    freqArray = new Uint8Array(bufferLength);
+    timeArray = new Uint8Array(bufferLength);
+  }
+  if (!sourceNode) {
+    try {
+      sourceNode = audioCtx.createMediaElementSource(audioEl);
+      sourceNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    } catch (e) {
+      console.warn("Visualizer source connect failed", e);
+    }
+  }
+  resizeCanvas();
+  startVisualizer();
+}
+function resizeCanvas() {
+  const w = panelCanvas.clientWidth;
+  const h = panelCanvas.clientHeight;
+  panelCanvas.width = Math.floor(w * DPR);
+  panelCanvas.height = Math.floor(h * DPR);
+  canvasCtx.setTransform(DPR,0,0,DPR,0,0);
+  canvasCtx.clearRect(0, 0, w, h);
+}
+function drawSpectrum() {
+  if (!analyser) return;
+  analyser.getByteFrequencyData(freqArray);
+  const w = panelCanvas.clientWidth;
+  const h = panelCanvas.clientHeight;
+  canvasCtx.clearRect(0, 0, w, h);
+  const barWidth = Math.max(2, Math.floor(w / 24));
+  const gap = Math.max(1, Math.floor(barWidth * 0.3));
+  const bars = Math.floor(w / (barWidth + gap));
+  const step = Math.max(1, Math.floor(bufferLength / bars));
+  for (let i = 0; i < bars; i++) {
+    const idx = i * step;
+    const value = freqArray[idx];
+    const percent = value / 255;
+    const barHeight = Math.max(2, percent * h);
+    const x = i * (barWidth + gap);
+    const y = h - barHeight;
+    const grad = canvasCtx.createLinearGradient(x, y, x, h);
+    grad.addColorStop(0, 'rgba(110,231,255,0.95)');
+    grad.addColorStop(1, 'rgba(167,139,250,0.9)');
+    canvasCtx.fillStyle = grad;
+    canvasCtx.fillRect(x, y, barWidth, barHeight);
+  }
+}
+function drawWaveform() {
+  if (!analyser) return;
+  analyser.getByteTimeDomainData(timeArray);
+  const w = panelCanvas.clientWidth;
+  const h = panelCanvas.clientHeight;
+  canvasCtx.clearRect(0, 0, w, h);
+  canvasCtx.lineWidth = 2;
+  canvasCtx.strokeStyle = 'rgba(110,231,255,0.9)';
+  canvasCtx.beginPath();
+  const sliceWidth = w / bufferLength;
+  let x = 0;
+  for (let i = 0; i < bufferLength; i++) {
+    const v = timeArray[i] / 128.0;
+    const y = v * h / 2;
+    if (i === 0) canvasCtx.moveTo(x, y);
+    else canvasCtx.lineTo(x, y);
+    x += sliceWidth;
+  }
+  canvasCtx.stroke();
+}
+function startVisualizer() {
+  if (animationId) cancelAnimationFrame(animationId);
+  function loop() {
+    if (visMode === "spectrum") drawSpectrum();
+    else drawWaveform();
+    animationId = requestAnimationFrame(loop);
+  }
+  loop();
+}
+function stopVisualizer() {
+  if (animationId) cancelAnimationFrame(animationId);
+  animationId = null;
+  if (canvasCtx) canvasCtx.clearRect(0, 0, panelCanvas.clientWidth, panelCanvas.clientHeight);
+}
+visToggleBtn.addEventListener("click", () => {
+  visMode = visMode === "spectrum" ? "waveform" : "spectrum";
+  visToggleBtn.textContent = visMode === "spectrum" ? "Spectrum" : "Waveform";
+  localStore.set("mc_vis_mode", visMode);
+});
+
+/* ---------- Play a track ---------- */
+async function playTrack(index) {
+  if (!state.tracks || !state.tracks.length) return;
+  if (index < 0 || index >= state.tracks.length) return;
+  state.currentIndex = index;
+  const meta = state.tracks[index];
+  const url = await ensureAudioUrl(meta.id);
+  if (!url) { alert("Audio not found for this track."); return; }
+  audioEl.src = url;
+  audioEl.volume = state.volume;
+  await audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
+  nowTitle.textContent = meta.title || meta.originalName || "Untitled";
+  nowMeta.textContent = meta.artist || "Unknown";
+
+  if (meta.coverId) {
+    const coverUrl = await ensureCoverUrl(meta.coverId);
+    setBannerImageSync(coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  } else if (meta.coverUrl) {
+    setBannerImageSync(meta.coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  } else {
+    setBannerImageSync(DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  }
+
+  showPanelForTrack(meta);
+  if (state.view !== "player") { state.prevView = state.view; state.view = "player"; renderView(); }
+  setupAudioVisualizer();
+  playerTitle.textContent = meta.title || "Untitled";
+  playerArtist.textContent = meta.artist || "Unknown";
+}
+
+/* ---------- Render views ---------- */
+function setActiveNav(view) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+}
+function renderView() {
+  setActiveNav(state.view === "player" ? state.prevView || "home" : state.view);
+  if (state.view === "home") return renderHome();
+  if (state.view === "catalog") return renderCatalog();
+  if (state.view === "uploads") return renderUploads();
+  if (state.view === "playlists") return renderPlaylists();
+  if (state.view === "trash") return renderTrash();
+  if (state.view === "player") return renderPlayerView();
+  renderHome();
+}
+function renderHome() {
+  const html = [];
+  html.push('<div class="grid">');
+  const items = state.tracks.slice(0, 12);
+  if (!items.length) html.push('<div class="small muted">No tracks yet. Upload to get started.</div>');
+  items.forEach(t => {
+    html.push(`<div class="card"><div class="card-body">
+      <div style="height:120px;overflow:hidden;border-radius:8px;background:#08101a;display:flex;align-items:center;justify-content:center">
+        ${t.coverUrl ? `<img src="${escapeHtml(t.coverUrl)}" style="width:100%;height:100%;object-fit:cover" alt="">` : '<div class="small muted">No cover</div>'}
+      </div>
+      <div style="margin-top:8px"><div class="title">${escapeHtml(t.title || t.originalName || 'Untitled')}</div>
+      <div class="meta">${escapeHtml(t.artist || 'Unknown')}</div></div>
+      <div style="margin-top:8px" class="row">
+        <button class="btn" onclick="(function(){ playTrackById('${t.id}'); })()">Play</button>
+        <button class="btn" onclick="(function(){ openTrackDetails('${t.id}'); })()">Open</button>
+      </div>
+    </div></div>`);
+  });
+  html.push('</div>');
+  viewContainer.innerHTML = html.join('');
+}
+function renderCatalog() {
+  const q = (searchInput.value || '').trim().toLowerCase();
+  const items = state.tracks.filter(t => {
+    if (!q) return true;
+    return (t.title||'').toLowerCase().includes(q) || (t.artist||'').toLowerCase().includes(q) || (t.uploaderName||'').toLowerCase().includes(q);
+  });
+  const html = [];
+  html.push('<div><div style="display:flex;justify-content:space-between;align-items:center"><h2>Catalog</h2><div class="small muted">Total: '+items.length+'</div></div>');
+  if (!items.length) html.push('<div class="small muted">No tracks match your search.</div>');
+  html.push('<div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">');
+  items.forEach(t => {
+    html.push(`<div class="card" style="display:flex;align-items:center;gap:12px;padding:10px">
+      <div style="width:84px;height:84px;flex:0 0 84px;overflow:hidden;border-radius:8px;background:#08101a">${t.coverUrl ? `<img src="${escapeHtml(t.coverUrl)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div>
+      <div style="flex:1">
+        <div class="title">${escapeHtml(t.title || t.originalName || 'Untitled')}</div>
+        <div class="meta">${escapeHtml(t.artist || 'Unknown')} • ${new Date(t.createdAt).toLocaleString()}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn" onclick="(function(){ playTrackById('${t.id}'); })()">Play</button>
+        <button class="btn" onclick="(function(){ openTrackDetails('${t.id}'); })()">Details</button>
+      </div>
+    </div>`);
+  });
+  html.push('</div></div>');
+  viewContainer.innerHTML = html.join('');
+}
+function renderUploads() {
+  const html = [];
+  html.push(`<div>
+    <h2>Uploads</h2>
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div class="small muted">Upload a new track (stored locally in your browser)</div>
+      <div class="form-grid" style="margin-top:8px">
+        <input id="u_title" type="text" placeholder="Title (optional)" />
+        <input id="u_artist" type="text" placeholder="Artist (optional)" />
+        <input id="u_file" type="file" accept="audio/*" />
+        <div class="row">
+          <button class="btn primary" id="u_submit">Upload</button>
+          <button class="btn" id="u_clear">Clear</button>
+        </div>
+        <div id="uploadSignPrompt" class="sign-prompt" style="display:none">
+          <strong>Sign in required</strong>
+          <p class="small">You must sign in to upload a new track. Click Sign in below or use the header form.</p>
+          <div style="margin-top:8px"><button id="openUploadModal" class="btn">Sign in now</button></div>
+        </div>
+      </div>
+    </div>`);
+
+  html.push('<div class="small muted">All uploads</div>');
+  if (!state.tracks.length) html.push('<div class="small muted">No uploads yet</div>');
+  html.push('<div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">');
+  state.tracks.forEach(t => {
+    html.push(`<div class="card" style="display:flex;align-items:center;gap:12px;padding:10px">
+      <div style="width:64px;height:64px;flex:0 0 64px;overflow:hidden;border-radius:8px;background:#08101a">${t.coverUrl ? `<img src="${escapeHtml(t.coverUrl)}" style="width:100%;height:100%;object-fit:cover">` : ''}</div>
+      <div style="flex:1">
+        <div class="title">${escapeHtml(t.title || t.originalName || 'Untitled')}</div>
+        <div class="meta">${escapeHtml(t.artist || 'Unknown')} • uploaded by ${escapeHtml(t.uploaderName || 'Guest')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn" onclick="(function(){ playTrackById('${t.id}'); })()">Play</button>
+        <button class="btn" onclick="(function(){ deleteTrack('${t.id}'); })()">Delete</button>
+      </div>
+    </div>`);
+  });
+  html.push('</div></div>');
+  viewContainer.innerHTML = html.join('');
+
+  // attach upload handlers
+  document.getElementById('u_submit').addEventListener('click', async () => {
+    const fileInput = document.getElementById('u_file');
+    const file = fileInput.files[0];
+    if (!file) return alert('Select an audio file to upload.');
+    if (!state.currentUser) {
+      document.getElementById('uploadSignPrompt').style.display = 'block';
+      document.getElementById('openUploadModal').addEventListener('click', () => openUploadModal());
+      return;
+    }
+    const title = document.getElementById('u_title').value.trim();
+    const artist = document.getElementById('u_artist').value.trim();
+    await addTrackFromFile(file, { title, artist }, state.currentUser);
+    await loadAll();
+    renderUploads();
+  });
+  document.getElementById('u_clear').addEventListener('click', () => {
+    document.getElementById('u_file').value = '';
+    document.getElementById('u_title').value = '';
+    document.getElementById('u_artist').value = '';
+    const sp = document.getElementById('uploadSignPrompt');
+    if (sp) sp.style.display = 'none';
+  });
+}
+function renderPlaylists() {
+  const html = [];
+  html.push('<div><h2>Playlists</h2>');
+  if (!state.playlists.length) html.push('<div class="small muted">No playlists yet</div>');
+  html.push('<div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">');
+  state.playlists.forEach(p => {
+    html.push(`<div class="card" style="padding:10px"><div class="title">${escapeHtml(p.name)}</div><div class="small muted">${(p.trackIds||[]).length} tracks</div></div>`);
+  });
+  html.push('</div></div>');
+  viewContainer.innerHTML = html.join('');
+}
+function renderTrash() {
+  const html = [];
+  html.push('<div><h2>Trash</h2>');
+  if (!state.trash.length) html.push('<div class="small muted">Trash is empty</div>');
+  html.push('<div style="margin-top:12px;display:flex;flex-direction:column;gap:12px">');
+  state.trash.forEach(t => {
+    html.push(`<div class="card" style="padding:10px"><div class="title">${escapeHtml(t.title)}</div><div class="small muted">${new Date(t.trashedAt).toLocaleString()}</div></div>`);
+  });
+  html.push('</div></div>');
+  viewContainer.innerHTML = html.join('');
+}
+function renderPlayerView() {
+  const idx = state.currentIndex;
+  const track = (idx >= 0 && state.tracks[idx]) ? state.tracks[idx] : null;
+  if (!track) { viewContainer.innerHTML = '<div class="small muted">No track selected</div>'; return; }
+  const html = [];
+  html.push(`<div class="player-view">
+    <div class="left">
+      <button class="btn back-btn" onclick="(function(){ restorePrevView(); })()">← Back</button>
+      <img src="${escapeHtml(panelArt.src || DEFAULT_BANNER)}" alt="cover" style="margin-top:12px" onerror="this.style.display='none'"/>
+    </div>
+    <div class="right">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="title">${escapeHtml(track.title)}</div>
+          <div class="meta">${escapeHtml(track.artist || 'Unknown')}</div>
+        </div>
+        <div class="small muted">Uploaded ${new Date(track.createdAt).toLocaleString()}</div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="row" style="gap:12px">
+          <button class="btn primary" onclick="(function(){ document.getElementById('audio').play(); })()">Play</button>
+          <button class="btn" onclick="(function(){ document.getElementById('audio').pause(); })()">Pause</button>
+          <button class="btn" onclick="(function(){ downloadTrack('${track.id}'); })()">Download</button>
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="small muted">Comments</div>
+        <div id="commentsArea"></div>
+      </div>
+    </div>
+  </div>`);
+  viewContainer.innerHTML = html.join('');
+  renderCommentsForTrack(track);
+}
+
+/* ---------- Comments ---------- */
+function renderCommentsForTrack(track) {
+  const area = document.getElementById('commentsArea');
+  if (!area) return;
+  const comments = track.comments || [];
+  const html = [];
+  html.push('<div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">');
+  html.push('<div style="display:flex;gap:8px"><input id="c_input" type="text" placeholder="Add a comment" style="flex:1;padding:8px;border-radius:8px;border:1px solid #24304f;background:#0f1628;color:var(--text)"><button id="c_submit" class="btn">Comment</button></div>');
+  if (!comments.length) html.push('<div class="small muted">No comments yet</div>');
+  comments.slice().reverse().forEach(c => {
+    html.push(`<div class="card comment" style="padding:8px"><div style="font-weight:600">${escapeHtml(c.author||'User')}</div><div class="small muted">${new Date(c.createdAt).toLocaleString()}</div><div style="margin-top:6px">${escapeHtml(c.body)}</div></div>`);
+  });
+  html.push('</div>');
+  area.innerHTML = html.join('');
+  document.getElementById('c_submit').addEventListener('click', async () => {
+    const input = document.getElementById('c_input');
+    const text = input.value.trim();
+    if (!text) return;
+    if (!state.currentUser) return alert('Sign in to comment (demo)');
+    track.comments = track.comments || [];
+    track.comments.push({ id: uid(), author: state.currentUser.username, authorId: state.currentUser.id, body: text, createdAt: Date.now() });
+    await idbPut(STORE_META, track);
+    input.value = '';
+    await loadAll();
+    renderPlayerView();
+  });
+}
+
+/* ---------- Inline helpers ---------- */
+window.playTrackById = async function(id) {
+  const idx = state.tracks.findIndex(t => t.id === id);
+  if (idx >= 0) await playTrack(idx);
+};
+window.openTrackDetails = async function(id) {
+  const idx = state.tracks.findIndex(t => t.id === id);
+  if (idx >= 0) { state.prevView = state.view; state.view = "player"; state.currentIndex = idx; renderView(); }
+};
+window.deleteTrack = async function(id) {
+  if (!confirm('Delete this track?')) return;
+  await idbDelete(STORE_META, id);
+  await idbDelete(STORE_BLOB, id);
+  await loadAll();
+  renderView();
+};
+window.downloadTrack = async function(id) {
+  const rec = await idbGet(STORE_BLOB, id);
+  if (!rec || !rec.blob) return alert('File not found');
+  const url = URL.createObjectURL(rec.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (rec.name || id);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
+};
+
+/* ---------- Restore prev view ---------- */
+function restorePrevView() {
+  state.view = state.prevView || "home";
+  state.prevView = null;
+  renderView();
+}
+
+/* ---------- Search & nav ---------- */
+document.querySelectorAll('.nav-btn').forEach(b => {
+  b.addEventListener('click', () => { state.view = b.dataset.view; renderView(); });
+});
+searchBtn.addEventListener('click', () => { state.search = searchInput.value.trim(); state.view = 'catalog'; renderView(); });
+searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') searchBtn.click(); });
+
+/* ---------- Player screen open/close ---------- */
+function openPlayerScreen() { playerScreen.classList.add("open"); playerScreen.setAttribute("aria-hidden","false"); hidePanel(); }
+function closePlayerScreen() { playerScreen.classList.remove("open"); playerScreen.setAttribute("aria-hidden","true"); const idx = state.currentIndex; const track = (idx >= 0 && state.tracks[idx]) ? state.tracks[idx] : null; if (track) showPanelForTrack(track); }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePlayerScreen(); });
+
+/* ---------- Header auth UI ---------- */
+function renderHeaderAuth() {
+  const container = document.getElementById('userBox');
+  container.innerHTML = '';
+  if (state.currentUser) {
+    const span = document.createElement('div');
+    span.className = 'mini';
+    span.innerHTML = `<div style="display:flex;flex-direction:column;align-items:flex-end"><div class="small muted">Signed in as</div><div><strong>${escapeHtml(state.currentUser.username)}</strong></div></div>`;
+    const logoutBtn = document.createElement('button');
+    logoutBtn.className = 'btn';
+    logoutBtn.textContent = 'Logout';
+    logoutBtn.onclick = () => { state.currentUser = null; localStore.set("mmc_demo_user", null); renderHeaderAuth(); renderView(); };
+    container.appendChild(span);
+    container.appendChild(logoutBtn);
+  } else {
+    const div = document.createElement('div');
+    div.style.display = 'flex';
+    div.style.gap = '8px';
+    div.innerHTML = `
+      <input id="ha_username" type="text" placeholder="Username" style="padding:8px;border-radius:8px;border:1px solid #24304f;background:#0f1628;color:var(--text)" />
+      <input id="ha_pass" type="password" placeholder="Password" style="padding:8px;border-radius:8px;border:1px solid #24304f;background:#0f1628;color:var(--text)" />
+      <button id="ha_login" class="btn">Log in</button>
+      <button id="ha_signup" class="btn">Sign up</button>
+    `;
+    container.appendChild(div);
+    setTimeout(()=> {
+      document.getElementById('ha_login').onclick = handleHeaderLogin;
+      document.getElementById('ha_signup').onclick = handleHeaderSignup;
+    }, 0);
+  }
+}
+async function handleHeaderSignup() {
+  const username = document.getElementById('ha_username').value.trim();
+  const pass = document.getElementById('ha_pass').value;
+  if (!username || !pass) return alert('Username and password required');
+  try {
+    const user = await createUser(username, pass);
+    state.currentUser = { id: user.id, username: user.username };
+    localStore.set("mmc_demo_user", state.currentUser);
+    alert('Signed up and logged in (demo)');
+    renderHeaderAuth();
+    closeUploadModal();
+  } catch (err) {
+    alert(err.message || 'Signup failed');
+  }
+}
+async function handleHeaderLogin() {
+  const username = document.getElementById('ha_username').value.trim();
+  const pass = document.getElementById('ha_pass').value;
+  if (!username || !pass) return alert('Username and password required');
+  try {
+    const user = await verifyUser(username, pass);
+    state.currentUser = { id: user.id, username: user.username };
+    localStore.set("mmc_demo_user", state.currentUser);
+    alert('Logged in (demo)');
+    renderHeaderAuth();
+    closeUploadModal();
+  } catch (err) {
+    alert(err.message || 'Login failed');
+  }
+}
+
+/* ---------- Upload modal handlers ---------- */
+function openUploadModal() {
+  uploadSignModal.classList.add('open');
+  uploadSignModal.setAttribute('aria-hidden','false');
+  modalMsg.textContent = '';
+  modalUsername.value = '';
+  modalPassword.value = '';
+}
+function closeUploadModal() {
+  uploadSignModal.classList.remove('open');
+  uploadSignModal.setAttribute('aria-hidden','true');
+}
+modalCloseBtn.addEventListener('click', () => closeUploadModal());
+modalLoginBtn.addEventListener('click', async () => {
+  const u = modalUsername.value.trim();
+  const p = modalPassword.value;
+  if (!u || !p) { modalMsg.textContent = 'Username and password required'; return; }
+  try {
+    const user = await verifyUser(u, p);
+    state.currentUser = { id: user.id, username: user.username };
+    localStore.set("mmc_demo_user", state.currentUser);
+    modalMsg.textContent = 'Logged in';
+    renderHeaderAuth();
+    setTimeout(closeUploadModal, 600);
+  } catch (err) { modalMsg.textContent = err.message || 'Login failed'; }
+});
+modalSignupBtn.addEventListener('click', async () => {
+  const u = modalUsername.value.trim();
+  const p = modalPassword.value;
+  if (!u || !p) { modalMsg.textContent = 'Username and password required'; return; }
+  try {
+    const user = await createUser(u, p);
+    state.currentUser = { id: user.id, username: user.username };
+    localStore.set("mmc_demo_user", state.currentUser);
+    modalMsg.textContent = 'Signed up and logged in';
+    renderHeaderAuth();
+    setTimeout(closeUploadModal, 600);
+  } catch (err) { modalMsg.textContent = err.message || 'Signup failed'; }
+});
+
+/* ---------- Subscriber counter (requires login) ---------- */
+function loadSubscriberCount() {
+  const n = localStore.get('mmc_subscribers', 0);
+  subscriberCountEl.textContent = String(n);
+  if (localStore.get('mmc_subscribed_flag', false)) {
+    subscribeBtn.textContent = 'Subscribed';
+    subscribeBtn.disabled = true;
+  }
+}
+function incrementSubscriberCount() {
+  let n = localStore.get('mmc_subscribers', 0);
+  n = Number(n) + 1;
+  localStore.set('mmc_subscribers', n);
+  localStore.set('mmc_subscribed_flag', true);
+  subscriberCountEl.textContent = String(n);
+}
+subscribeBtn.addEventListener('click', () => {
+  if (!state.currentUser) {
+    openUploadModal();
+    modalMsg.textContent = 'Sign in to subscribe';
+    return;
+  }
+  incrementSubscriberCount();
+  subscribeBtn.textContent = 'Subscribed';
+  subscribeBtn.disabled = true;
+});
+
+/* ---------- Visualizer init on first interaction ---------- */
+document.addEventListener('click', () => { if (!audioCtx && !reduceMotion) setupAudioVisualizer(); }, { once: true });
+
+/* ---------- Donate button ---------- */
+document.getElementById('donatePayPal').addEventListener('click', () => { window.open('https://www.paypal.com/donate', '_blank'); });
+
+/* ---------- Init ---------- */
+async function init() {
+  volRange.value = state.volume;
+  audioEl.volume = state.volume;
+  await loadAll();
+  renderHeaderAuth();
+  loadSubscriberCount();
+  state.view = 'home';
+  renderView();
+  if (state.tracks.length) {
+    const first = state.tracks[0];
+    if (first.coverId) {
+      const url = await ensureCoverUrl(first.coverId);
+      setBannerImageSync(url || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
+    } else {
+      setBannerImageSync(first.coverUrl || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
+    }
+  } else {
+    setBannerImageSync(DEFAULT_BANNER);
+  }
+}
+init();
+
+/* Expose for debugging */
+window.MixMusic = { loadAll, addTrackFromFile, idbGetAll, idbGet, playTrack, state };
 </script>
 </body>
 </html>
-
