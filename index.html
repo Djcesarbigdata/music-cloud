@@ -10,7 +10,7 @@
     --accent:#6ee7ff; --accent2:#a78bfa; --radius:12px; --shadow:0 10px 30px rgba(0,0,0,.35);
   }
   * { box-sizing:border-box }
-  body { margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b0f1a; color:var(--text); }
+  body { margin:0; font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:#0b0f1a; color:var(--text); }
   .app {
     display:grid; grid-template-columns:220px 1fr; grid-template-rows:auto 1fr 90px;
     grid-template-areas:"sidebar header" "sidebar main" "player player"; height:100vh;
@@ -62,10 +62,11 @@
 <body>
 <div class="app">
   <header>
-    <div class="brand"><div class="logo"></div><div>Mix Music Cloud</div></div>
+    <div class="brand"><div class="logo" aria-hidden="true"></div><div>Mix Music Cloud</div></div>
     <div class="searchbar">
+      <label for="searchInput" class="sr-only" style="position:absolute;left:-9999px;">Search</label>
       <input id="searchInput" type="text" placeholder="Search title, artist, genre…" />
-      <button id="searchBtn">Search</button>
+      <button id="searchBtn" aria-label="Search">Search</button>
     </div>
     <div class="userbox" id="userBox">
       <button class="btn" id="loginBtn">Log in</button>
@@ -93,22 +94,22 @@
 
   <div class="player">
     <div class="mini">
-      <img id="miniCover" alt="" />
+      <img id="miniCover" alt="Current track cover" />
       <div>
         <div id="nowTitle" class="title">Idle — select a track</div>
         <div id="nowMeta" class="meta">—</div>
       </div>
     </div>
     <div class="controls">
-      <button class="btn" id="prevBtn">⏮</button>
-      <button class="btn" id="playPauseBtn">▶</button>
-      <button class="btn" id="nextBtn">⏭</button>
+      <button class="btn" id="prevBtn" aria-label="Previous">⏮</button>
+      <button class="btn" id="playPauseBtn" aria-label="Play or pause">▶</button>
+      <button class="btn" id="nextBtn" aria-label="Next">⏭</button>
     </div>
     <div class="seek">
       <span id="curTime">0:00</span>
       <input id="seekRange" type="range" min="0" max="100" value="0" />
       <span id="durTime">0:00</span>
-      🔊 <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.8" />
+      🔊 <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume" />
     </div>
     <audio id="audio"></audio>
   </div>
@@ -133,8 +134,15 @@ const state = {
   view: "home",
   search: ""
 };
+/* Persist but do not store transient blob: object URLs. For persistent storage you should use IndexedDB or a backend. */
 function persist() {
-  store.set("mc_tracks", state.tracks);
+  // create a safe copy of tracks for storage (strip blob: object URLs)
+  const tracksToStore = state.tracks.map(t => {
+    const copy = Object.assign({}, t);
+    if (copy.src && copy.src.startsWith && copy.src.startsWith('blob:')) delete copy.src;
+    return copy;
+  });
+  store.set("mc_tracks", tracksToStore);
   store.set("mc_playlists", state.playlists);
   store.set("mc_updates", state.updates);
   store.set("mc_users", state.users);
@@ -170,7 +178,7 @@ function genreBadge(genre) {
 function groupTracksByGenre() {
   const folders = {};
   state.tracks.forEach(t => {
-    const g = (t.genre || "unsorted").toLowerCase();
+    const g = ((t.genre || "unsorted").toLowerCase());
     if (!folders[g]) folders[g] = [];
     folders[g].push(t);
   });
@@ -178,22 +186,36 @@ function groupTracksByGenre() {
 }
 
 /* --- Auth (local-only) --- */
-function hash(s) { // simple non-crypto hash for demo
-  let h = 0; for (let i=0;i<s.length;i++) h = (h<<5)-h + s.charCodeAt(i); return String(h);
+/* NOTE: Client-side auth is for demo only. Do not use for production.
+   Prefer a backend with secure password hashing (bcrypt/argon2) and proper session handling. */
+
+/* Better demo hash using Web Crypto (SHA-256). Still not a replacement for server-side password hashing. */
+async function hash(s) {
+  try {
+    const enc = new TextEncoder();
+    const data = enc.encode(s);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    // fallback to simple non-crypto hash if Web Crypto unavailable
+    let h = 0; for (let i=0;i<s.length;i++) h = (h<<5)-h + s.charCodeAt(i); return String(h);
+  }
 }
-function signup(email, pass, nick) {
+async function signup(email, pass, nick) {
   email = email.trim().toLowerCase();
   if (!email || !pass || !nick) return { ok:false, msg:"All fields required." };
   if (state.users.find(u => u.email === email)) return { ok:false, msg:"Email already registered." };
-  state.users.push({ email, passHash: hash(pass), nick });
+  const passHash = await hash(pass);
+  state.users.push({ email, passHash, nick });
   state.session = { email, nick };
   persist();
   return { ok:true };
 }
-function login(email, pass) {
+async function login(email, pass) {
   email = email.trim().toLowerCase();
   const u = state.users.find(u => u.email === email);
-  if (!u || u.passHash !== hash(pass)) return { ok:false, msg:"Invalid credentials." };
+  const ph = await hash(pass);
+  if (!u || u.passHash !== ph) return { ok:false, msg:"Invalid credentials." };
   state.session = { email, nick: u.nick };
   persist();
   return { ok:true };
@@ -240,8 +262,9 @@ function showAuth(mode) {
   const submit = document.createElement("button"); submit.className="btn primary"; submit.textContent = mode === "login" ? "Log in" : "Create account";
   const cancel = document.createElement("button"); cancel.className="btn"; cancel.textContent="Cancel";
   cancel.onclick = () => render();
-  submit.onclick = () => {
-    const res = mode === "login" ? login(email.value, pass.value) : signup(email.value, pass.value, nick.value);
+  submit.onclick = async () => {
+    // login/signup are async now
+    const res = mode === "login" ? await login(email.value, pass.value) : await signup(email.value, pass.value, nick ? nick.value : "");
     if (!res.ok) { alert(res.msg); return; }
     renderUserBox(); render();
   };
@@ -257,11 +280,14 @@ function setActiveNav(view) {
 document.querySelectorAll(".nav-btn").forEach(btn => {
   btn.onclick = () => { state.view = btn.dataset.view; setActiveNav(state.view); render(); };
 });
-document.getElementById("donatePayPal").onclick = () => window.open("https://freedomigame.kesug.com/?i=1", "_blank");
+document.getElementById("donatePayPal").onclick = () => {
+  const w = window.open("https://freedomigame.kesug.com/?i=1", "_blank");
+  if (w) try { w.opener = null; } catch(e){ /* ignore */ }
+};
 
 /* --- Search --- */
-document.getElementById("searchBtn").onclick = () => { state.search = document.getElementById("searchInput").value.trim().toLowerCase(); render(); };
-document.getElementById("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") { state.search = e.target.value.trim().toLowerCase(); render(); } });
+document.getElementById("searchBtn").onclick = () => { state.search = (document.getElementById("searchInput").value || "").trim().toLowerCase(); render(); };
+document.getElementById("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") { state.search = (e.target.value || "").trim().toLowerCase(); render(); } });
 
 /* --- Cards --- */
 function trackCard(t) {
@@ -269,6 +295,7 @@ function trackCard(t) {
   const coverWrap = document.createElement("div"); coverWrap.style.position="relative";
   const cover = document.createElement("img");
   cover.src = t.cover && t.cover.trim() ? t.cover : defaultCoverForGenre(t.genre, t.id);
+  cover.alt = t.title || "Track cover";
   cover.style.width="100%"; cover.style.height="140px"; cover.style.objectFit="cover";
   const badge = document.createElement("div"); badge.className="badge"; badge.textContent = genreBadge(t.genre);
   coverWrap.append(cover, badge);
@@ -311,8 +338,10 @@ function renderFolderTracks(genre, tracks) {
   row.append(back, title); wrap.append(row);
   const grid = document.createElement("div"); grid.className="grid";
   const q = state.search;
-  tracks.filter(t => !q || (t.title+t.artist+t.genre).toLowerCase().includes(q))
-        .forEach(t => grid.append(trackCard(t)));
+  tracks.filter(t => {
+    const hay = ((t.title||"") + (t.artist||"") + (t.genre||"")).toLowerCase();
+    return !q || hay.includes(q);
+  }).forEach(t => grid.append(trackCard(t)));
   wrap.append(grid);
   const vc = document.getElementById("viewContainer"); vc.innerHTML=""; vc.append(wrap);
 }
@@ -321,8 +350,10 @@ function renderCatalog() {
   const title = document.createElement("div"); title.className="title"; title.textContent="Catalog";
   const grid = document.createElement("div"); grid.className="grid";
   const q = state.search;
-  state.tracks.filter(t => !q || (t.title+t.artist+t.genre).toLowerCase().includes(q))
-              .forEach(t => grid.append(trackCard(t)));
+  state.tracks.filter(t => {
+    const hay = ((t.title||"") + (t.artist||"") + (t.genre||"")).toLowerCase();
+    return !q || hay.includes(q);
+  }).forEach(t => grid.append(trackCard(t)));
   wrap.append(title, grid); return wrap;
 }
 function renderUploads() {
@@ -340,6 +371,9 @@ function renderUploads() {
   submit.onclick = () => {
     if (!fileInput.files.length) { alert("Please select an MP3 file."); return; }
     const file = fileInput.files[0];
+    // optional: validate MIME and size
+    if (!/audio/.test(file.type)) { if (!confirm("Selected file does not look like audio. Continue?")) return; }
+    if (file.size > 50 * 1024 * 1024) { if (!confirm("File is larger than 50MB. Continue?")) return; }
     const src = URL.createObjectURL(file);
     const id = "t" + Math.random().toString(36).slice(2,8);
     const track = {
@@ -348,7 +382,7 @@ function renderUploads() {
       artist: artistInput.value.trim() || "Unknown Artist",
       genre: genreInput.value.trim() || "unsorted",
       cover: coverInput.value.trim(),
-      src,
+      src,               // transient blob URL, not persisted to localStorage
       likes: 0,
       plays: 0,
       created: Date.now()
@@ -448,7 +482,12 @@ function playTrackById(id) {
   if (idx < 0) return;
   state.currentIndex = idx;
   const t = state.tracks[idx];
-  const cover = t.cover && t.cover.trim() ? t.cover : defaultCoverForGenre(t.genre, t.id);
+  const cover = (t.cover && t.cover.trim()) ? t.cover : defaultCoverForGenre(t.genre, t.id);
+  if (!t.src) {
+    // no persisted or transient source — can't play. Notify user.
+    alert("This track has no playable source in this session. Re-upload or use a hosted URL.");
+    return;
+  }
   audio.src = t.src;
   audio.play().then(() => {
     state.isPlaying = true; playPauseBtn.textContent = "⏸";
@@ -476,12 +515,20 @@ audio.addEventListener("timeupdate", () => {
 seekRange.oninput = () => { const dur = audio.duration || 0; if (dur > 0) { const pct = parseInt(seekRange.value,10)/100; audio.currentTime = dur * Math.min(Math.max(pct,0),1); } };
 audio.addEventListener("ended", () => next());
 document.addEventListener("keydown", e => {
-  if (e.target.tagName === "INPUT") return;
+  // ignore typing and contenteditable
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
   if (e.code === "Space") { e.preventDefault(); playPause(); }
   if (e.code === "ArrowRight") audio.currentTime += 5;
   if (e.code === "ArrowLeft") audio.currentTime -= 5;
   if (e.code === "ArrowUp") audio.volume = Math.min(1, audio.volume + 0.05);
   if (e.code === "ArrowDown") audio.volume = Math.max(0, audio.volume - 0.05);
+});
+
+/* --- Revoke blob object URLs on unload to avoid leaks --- */
+window.addEventListener('beforeunload', () => {
+  state.tracks.forEach(t => {
+    try { if (t.src && t.src.startsWith && t.src.startsWith('blob:')) URL.revokeObjectURL(t.src); } catch(e){}
+  });
 });
 
 /* --- Root render --- */
