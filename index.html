@@ -3,15 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Mix Music Cloud — Full App (Username Auth, Subscriber, Artwork)</title>
+<title>Mix Music Cloud — Full App (Netlify + S3, Mobile, Migration)</title>
 
 <!-- music-metadata-browser for reading embedded artwork -->
 <script src="https://unpkg.com/music-metadata-browser/dist/music-metadata-browser.umd.js"></script>
 
-<meta name="google-adsense-account" content="ca-pub-1335151788577064">
-<!-- Google AdSense placeholder (replace data-ad-slot with your slot id) -->
+<!-- AdSense script (replace client id if needed) -->
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1335151788577064"
-     crossorigin="anonymous"></script>
+  crossorigin="anonymous"></script>
 
 <style>
   :root{
@@ -92,12 +91,60 @@
   .sign-prompt { margin-top:12px;padding:12px;border-radius:8px;background:#fff7e6;border:1px solid #f0dca8;color:#222 }
   .sidebar-sub { margin-top:12px; display:flex; gap:8px; align-items:center; }
   .muted-note { font-size:0.85rem;color:#cbd8e6;margin-top:8px }
+
+  /* ===== Mobile improvements ===== */
+  .btn, .nav-btn { padding: 12px 14px; min-height: 44px; line-height: 1.1; }
+  .nav-btn { font-size: 15px; }
+  .player {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    box-sizing: border-box;
+  }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-areas: "header" "banner" "main" "player"; }
+    aside { display: none; }
+    .banner .img { height: 160px; }
+    .player { padding: 10px; grid-template-columns: 1fr auto; gap: 8px; }
+    .mini img { width: 48px; height: 48px; }
+    .searchbar input { width: 140px; }
+    .player-panel .art { width: 64px; height: 64px; }
+    .card-body { padding: 10px; }
+  }
+  @media (max-width: 420px) {
+    .banner .img { height: 120px; }
+    .btn { padding: 10px 12px; font-size: 15px; }
+    .player { grid-template-columns: 1fr auto; gap: 6px; }
+    .player-panel .art { width: 56px; height: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce), (max-width: 420px) {
+    .banner .img img, .player-screen { transition: none !important; }
+  }
+  .aside-overlay {
+    position: fixed;
+    left: 0;
+    top: 56px;
+    bottom: 0;
+    width: 84%;
+    max-width: 420px;
+    z-index: 20000;
+    background: var(--bg2);
+    padding: 12px;
+    overflow: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  }
+  .btn, .nav-btn, .ads-slot { -webkit-tap-highlight-color: rgba(255,255,255,0.04); touch-action: manipulation; }
+
+  /* Migration UI tweaks */
+  #migrationSection .title { margin-bottom:6px; }
+  #migrationProgress { white-space:pre-wrap; max-height:160px; overflow:auto; }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
     <div class="brand"><div class="logo" aria-hidden="true"></div><div>Mix Music Cloud</div></div>
+    <button id="mobileHamburger" class="btn" aria-label="Open menu" title="Menu" style="display:none">☰</button>
     <div class="searchbar">
       <label for="searchInput" class="sr-only" style="position:absolute;left:-9999px;">Search</label>
       <input id="searchInput" type="text" placeholder="Search title, artist…" />
@@ -240,15 +287,16 @@
 </div>
 
 <script>
-/* Full single-file app:
-   - Username/password signup & login (IndexedDB)
-   - Only prompt to sign in when user attempts to upload or subscribe
-   - Subscriber counter persisted in localStorage and requires login
-   - Artwork extraction from uploaded audio using music-metadata-browser
-   - Banner, panel, mini and player screen covers synchronized
-   - Visualizer, playlists, comments, downloads, IndexedDB storage
-   - Demo-only cryptographic PBKDF2-based hash for password storage (not production-grade)
-*/
+/* =========================
+   Full app with:
+   - IndexedDB local cache + optional migration to S3 via Netlify functions
+   - Netlify + S3 client helpers (presign, upload, save metadata, list metadata)
+   - Username/password auth (client-side demo)
+   - Subscriber flow requiring login
+   - Artwork extraction (music-metadata-browser)
+   - Mobile improvements and hamburger nav
+   - Migration UI integrated into Uploads view
+   ========================= */
 
 /* ---------- Defaults ---------- */
 const DEFAULT_BANNER_SVG = encodeURIComponent(`
@@ -337,17 +385,6 @@ async function idbGet(storeName, key) {
     req.onerror = () => rej(req.error);
   });
 }
-async function idbFindByIndex(storeName, indexName, value) {
-  const db = await openDb();
-  return new Promise((res, rej) => {
-    const tx = db.transaction(storeName, "readonly");
-    const st = tx.objectStore(storeName);
-    const idx = st.index(indexName);
-    const r = idx.get(value);
-    r.onsuccess = () => res(r.result || null);
-    r.onerror = () => rej(r.error);
-  });
-}
 async function idbDelete(storeName, key) {
   const db = await openDb();
   return new Promise((res, rej) => {
@@ -424,14 +461,15 @@ const modalMsg = document.getElementById("modal_msg");
 
 const subscriberCountEl = document.getElementById("subscriberCount");
 const subscribeBtn = document.getElementById("subscribeBtn");
+const mobileHamburger = document.getElementById("mobileHamburger");
 
 /* ---------- Utilities ---------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
 const formatTime = s => { if (!s || isNaN(s)) return "0:00"; const m = Math.floor(s/60); const sec = Math.floor(s%60).toString().padStart(2,"0"); return `${m}:${sec}`; };
 const escapeHtml = s => String(s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-/* ---------- Load / Save ---------- */
-async function loadAll() {
+/* ---------- Load / Save (local) ---------- */
+async function loadAllLocal() {
   try { const metas = await idbGetAll(STORE_META); state.tracks = metas.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)); } catch (e) { console.warn("Failed to load tracks", e); state.tracks = []; }
   try { const pls = await idbGetAll(STORE_PLAYLISTS); state.playlists = pls.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)); } catch (e) { state.playlists = []; }
   try { const trash = await idbGetAll(STORE_TRASH); state.trash = trash.sort((a,b) => (b.trashedAt||0) - (a.trashedAt||0)); } catch (e) { state.trash = []; }
@@ -493,15 +531,15 @@ async function extractAndStoreArtwork(file) {
     await idbPut(STORE_COVERS, { id: coverId, blob });
     const url = URL.createObjectURL(blob);
     state.coverUrls[coverId] = url;
-    return { coverId, coverUrl: url };
+    return { coverId, coverUrl: url, blob };
   } catch (e) {
     console.warn("Artwork extraction failed", e);
     return null;
   }
 }
 
-/* Add track from file: store meta and blob, extract artwork if present */
-async function addTrackFromFile(file, metadata = {}, uploader) {
+/* ---------- Local add track (kept for offline use) ---------- */
+async function addTrackFromFileLocal(file, metadata = {}, uploader) {
   const id = uid();
   const art = await extractAndStoreArtwork(file);
   const meta = {
@@ -523,7 +561,7 @@ async function addTrackFromFile(file, metadata = {}, uploader) {
   const blobRec = { id, blob: file, name: file.name };
   await idbPut(STORE_META, meta);
   await idbPut(STORE_BLOB, blobRec);
-  await loadAll();
+  await loadAllLocal();
   return meta;
 }
 
@@ -559,6 +597,7 @@ function setBannerImageSync(url, altText = "") {
   }
 }
 
+/* updateBannerForTrackOrSearch uses setBannerImageSync */
 async function updateBannerForTrackOrSearch(trackMeta, searchTerm) {
   if (trackMeta && trackMeta.coverUrl) {
     if (trackMeta.coverId) {
@@ -572,8 +611,7 @@ async function updateBannerForTrackOrSearch(trackMeta, searchTerm) {
   const q = trackMeta ? `${trackMeta.title} ${trackMeta.artist}` : (searchTerm || "");
   if (q) {
     try {
-      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=1`);
-      const art = await res.json();
+      const art = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=1`).then(r=>r.json());
       if (art && art.results && art.results[0] && art.results[0].artworkUrl100) {
         const url = art.results[0].artworkUrl100.replace(/100x100bb.jpg|60x60bb.jpg|200x200bb.jpg/gi, "600x600bb.jpg");
         setBannerImageSync(url, q);
@@ -593,7 +631,9 @@ function showPanelForTrack(track) {
   }
   panelTitle.textContent = track.title || "Untitled";
   panelMeta.textContent = track.artist || "Unknown";
-  if (track.coverId) {
+  if (track.coverUrl && track.coverUrl.startsWith('data:')) {
+    setBannerImageSync(track.coverUrl, `${track.title} — ${track.artist}`);
+  } else if (track.coverId) {
     ensureCoverUrl(track.coverId).then(url => setBannerImageSync(url || DEFAULT_BANNER, `${track.title} — ${track.artist}`));
   } else {
     setBannerImageSync(track.coverUrl || DEFAULT_BANNER, `${track.title} — ${track.artist}`);
@@ -774,13 +814,18 @@ visToggleBtn.addEventListener("click", () => {
   localStore.set("mc_vis_mode", visMode);
 });
 
-/* ---------- Play a track ---------- */
+/* ---------- Play a track (local or remote) ---------- */
 async function playTrack(index) {
   if (!state.tracks || !state.tracks.length) return;
   if (index < 0 || index >= state.tracks.length) return;
   state.currentIndex = index;
   const meta = state.tracks[index];
-  const url = await ensureAudioUrl(meta.id);
+
+  // If metadata has audioUrl (remote), use it; otherwise try local blob
+  let url = meta.audioUrl || null;
+  if (!url) {
+    url = await ensureAudioUrl(meta.id);
+  }
   if (!url) { alert("Audio not found for this track."); return; }
   audioEl.src = url;
   audioEl.volume = state.volume;
@@ -788,11 +833,11 @@ async function playTrack(index) {
   nowTitle.textContent = meta.title || meta.originalName || "Untitled";
   nowMeta.textContent = meta.artist || "Unknown";
 
-  if (meta.coverId) {
+  if (meta.coverUrl) {
+    setBannerImageSync(meta.coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  } else if (meta.coverId) {
     const coverUrl = await ensureCoverUrl(meta.coverId);
     setBannerImageSync(coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
-  } else if (meta.coverUrl) {
-    setBannerImageSync(meta.coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
   } else {
     setBannerImageSync(DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
   }
@@ -870,7 +915,7 @@ function renderUploads() {
   html.push(`<div>
     <h2>Uploads</h2>
     <div class="card" style="padding:12px;margin-bottom:12px">
-      <div class="small muted">Upload a new track (stored locally in your browser)</div>
+      <div class="small muted">Upload a new track (stored in cloud via S3)</div>
       <div class="form-grid" style="margin-top:8px">
         <input id="u_title" type="text" placeholder="Title (optional)" />
         <input id="u_artist" type="text" placeholder="Artist (optional)" />
@@ -904,6 +949,18 @@ function renderUploads() {
     </div>`);
   });
   html.push('</div></div>');
+
+  // Migration UI block
+  html.push(`<div id="migrationSection" class="card" style="padding:12px;margin-top:12px">
+    <div class="title">Migrate local uploads</div>
+    <div class="small muted">If you have tracks stored locally in this browser, migrate them to cloud storage so they persist across devices.</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <button id="startMigrationBtn" class="btn primary">Migrate local uploads to cloud</button>
+      <button id="exportLocalBtn" class="btn">Export local files</button>
+    </div>
+    <div id="migrationProgress" class="small muted" style="margin-top:8px"></div>
+  </div>`);
+
   viewContainer.innerHTML = html.join('');
 
   // attach upload handlers
@@ -911,6 +968,7 @@ function renderUploads() {
     const fileInput = document.getElementById('u_file');
     const file = fileInput.files[0];
     if (!file) return alert('Select an audio file to upload.');
+    // Only prompt sign-in when uploading and not signed in
     if (!state.currentUser) {
       document.getElementById('uploadSignPrompt').style.display = 'block';
       document.getElementById('openUploadModal').addEventListener('click', () => openUploadModal());
@@ -918,9 +976,16 @@ function renderUploads() {
     }
     const title = document.getElementById('u_title').value.trim();
     const artist = document.getElementById('u_artist').value.trim();
-    await addTrackFromFile(file, { title, artist }, state.currentUser);
-    await loadAll();
-    renderUploads();
+    try {
+      await addTrackRemote(file, { title, artist }, state.currentUser);
+      fileInput.value = '';
+      document.getElementById('u_title').value = '';
+      document.getElementById('u_artist').value = '';
+      alert('Upload complete');
+    } catch (e) {
+      console.error(e);
+      alert('Upload failed: ' + (e.message || e));
+    }
   });
   document.getElementById('u_clear').addEventListener('click', () => {
     document.getElementById('u_file').value = '';
@@ -929,6 +994,9 @@ function renderUploads() {
     const sp = document.getElementById('uploadSignPrompt');
     if (sp) sp.style.display = 'none';
   });
+
+  // wire migration UI
+  wireMigrationUI();
 }
 function renderPlaylists() {
   const html = [];
@@ -1010,7 +1078,7 @@ function renderCommentsForTrack(track) {
     track.comments.push({ id: uid(), author: state.currentUser.username, authorId: state.currentUser.id, body: text, createdAt: Date.now() });
     await idbPut(STORE_META, track);
     input.value = '';
-    await loadAll();
+    await loadAllLocal();
     renderPlayerView();
   });
 }
@@ -1028,7 +1096,7 @@ window.deleteTrack = async function(id) {
   if (!confirm('Delete this track?')) return;
   await idbDelete(STORE_META, id);
   await idbDelete(STORE_BLOB, id);
-  await loadAll();
+  await loadAllLocal();
   renderView();
 };
 window.downloadTrack = async function(id) {
@@ -1192,8 +1260,286 @@ subscribeBtn.addEventListener('click', () => {
   subscribeBtn.disabled = true;
 });
 
-/* ---------- Visualizer init on first interaction ---------- */
-document.addEventListener('click', () => { if (!audioCtx && !reduceMotion) setupAudioVisualizer(); }, { once: true });
+/* ---------- Netlify + S3 client helpers ---------- */
+
+// Request presigned PUT URL from Netlify function
+async function getPresignedUrl(filename, contentType) {
+  const res = await fetch(`/.netlify/functions/getPresign?name=${encodeURIComponent(filename)}&type=${encodeURIComponent(contentType || 'application/octet-stream')}`);
+  if (!res.ok) throw new Error('Presign request failed: ' + (await res.text()));
+  return res.json(); // { url, key, publicUrl }
+}
+
+// Upload file to S3 using presigned URL
+async function uploadToS3WithPresign(file) {
+  const presign = await getPresignedUrl(file.name, file.type || 'application/octet-stream');
+  const put = await fetch(presign.url, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });
+  if (!put.ok) throw new Error('Upload to S3 failed: ' + put.statusText);
+  return { key: presign.key, url: presign.publicUrl };
+}
+
+// Save metadata JSON to S3 via Netlify function
+async function saveMetadataToServer(meta) {
+  const res = await fetch('/.netlify/functions/saveMeta', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(meta)
+  });
+  if (!res.ok) throw new Error('Saving metadata failed: ' + (await res.text()));
+  return res.json();
+}
+
+// List metadata objects (calls listMeta function)
+async function listAllMetadata() {
+  const res = await fetch('/.netlify/functions/listMeta');
+  if (!res.ok) throw new Error('Listing metadata failed: ' + (await res.text()));
+  return res.json(); // array of metadata objects
+}
+
+/* ---------- Remote upload flow (use instead of local-only addTrackFromFile) ---------- */
+async function addTrackRemote(file, metadata = {}, uploader) {
+  // 1) Extract artwork (reuse your existing function if present)
+  let art = null;
+  if (typeof extractAndStoreArtwork === 'function') {
+    try { art = await extractAndStoreArtwork(file); } catch (e) { console.warn('Artwork extraction failed', e); art = null; }
+  }
+
+  // 2) Upload audio to S3
+  const audioUpload = await uploadToS3WithPresign(file);
+
+  // 3) Upload cover if extracted (art.blob) or if user provided a cover File
+  let coverUrl = null;
+  if (art && art.blob) {
+    const coverFile = new File([art.blob], `cover-${file.name}.jpg`, { type: art.blob.type || 'image/jpeg' });
+    const coverUpload = await uploadToS3WithPresign(coverFile);
+    coverUrl = coverUpload.url;
+  }
+
+  // 4) Build metadata and save to server
+  const id = uid();
+  const meta = {
+    id,
+    title: metadata.title || file.name,
+    artist: metadata.artist || (uploader ? uploader.username : ''),
+    originalName: file.name,
+    mimeType: file.type,
+    size: file.size,
+    createdAt: Date.now(),
+    audioUrl: audioUpload.url,
+    s3Key: audioUpload.key,
+    coverUrl: coverUrl || (art ? art.coverUrl : null),
+    uploaderName: uploader ? uploader.username : 'Guest',
+    uploaderId: uploader ? uploader.id : null
+  };
+
+  await saveMetadataToServer(meta);
+  // Refresh client state from server
+  await loadAllFromServer();
+  return meta;
+}
+
+/* ---------- Load metadata from server into state ---------- */
+async function loadAllFromServer() {
+  try {
+    const metas = await listAllMetadata();
+    state.tracks = (metas || []).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    renderView();
+  } catch (e) {
+    console.warn('Failed to load metadata from server', e);
+  }
+}
+
+/* ---------- Migration: upload local IndexedDB blobs to S3 and save metadata ---------- */
+async function migrateLocalToRemote(onProgress) {
+  const progress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); else console.log(msg); };
+
+  // 1) Read all blob records
+  let blobs = [];
+  try {
+    blobs = await idbGetAll(STORE_BLOB); // tracks_blob store
+  } catch (e) {
+    progress('Failed to read local blobs: ' + e.message);
+    return;
+  }
+  if (!blobs.length) {
+    progress('No local uploads found to migrate.');
+    return;
+  }
+
+  progress(`Found ${blobs.length} local file(s). Starting migration...`);
+
+  for (let i = 0; i < blobs.length; i++) {
+    const rec = blobs[i];
+    try {
+      progress(`(${i+1}/${blobs.length}) Preparing ${rec.name || rec.id}...`);
+      const metaLocal = await idbGet(STORE_META, rec.id).catch(()=>null);
+      // create File from blob
+      const file = new File([rec.blob], rec.name || `${rec.id}.audio`, { type: metaLocal?.mimeType || rec.blob.type || 'audio/mpeg' });
+
+      // upload audio
+      progress(`Uploading audio: ${file.name}`);
+      const uploaded = await uploadToS3WithPresign(file);
+
+      // upload cover if exists
+      let coverUrl = null;
+      if (metaLocal && metaLocal.coverId) {
+        const coverRec = await idbGet(STORE_COVERS, metaLocal.coverId).catch(()=>null);
+        if (coverRec && coverRec.blob) {
+          const coverFile = new File([coverRec.blob], `cover-${file.name}.jpg`, { type: coverRec.blob.type || 'image/jpeg' });
+          progress(`Uploading cover for ${file.name}`);
+          const cu = await uploadToS3WithPresign(coverFile);
+          coverUrl = cu.url;
+        }
+      }
+
+      // build new metadata
+      const newMeta = {
+        id: rec.id,
+        title: metaLocal?.title || rec.name || 'Untitled',
+        artist: metaLocal?.artist || '',
+        originalName: rec.name,
+        mimeType: metaLocal?.mimeType || file.type,
+        size: file.size,
+        createdAt: metaLocal?.createdAt || Date.now(),
+        audioUrl: uploaded.url,
+        s3Key: uploaded.key,
+        coverUrl: coverUrl || (metaLocal?.coverUrl || null),
+        uploaderName: state.currentUser?.username || (metaLocal?.uploaderName || 'Migrated'),
+        uploaderId: state.currentUser?.id || (metaLocal?.uploaderId || null)
+      };
+
+      // save metadata to server
+      progress(`Saving metadata for ${file.name}`);
+      await saveMetadataToServer(newMeta);
+
+      progress(`Migrated ${file.name} successfully.`);
+    } catch (err) {
+      console.error('Migration error for record', rec, err);
+      progress(`Error migrating ${rec.name || rec.id}: ${err.message || err}`);
+    }
+  }
+
+  progress('Migration finished. Refreshing list from server...');
+  await loadAllFromServer();
+  progress('Done.');
+}
+
+/* Wire migration UI buttons (call this once after DOM is ready or after renderUploads) */
+function wireMigrationUI() {
+  const startBtn = document.getElementById('startMigrationBtn');
+  const exportBtn = document.getElementById('exportLocalBtn');
+  const progressEl = document.getElementById('migrationProgress');
+  if (startBtn) {
+    startBtn.onclick = async () => {
+      if (!confirm('This will upload your local audio files to cloud storage. Continue?')) return;
+      startBtn.disabled = true;
+      progressEl.textContent = 'Starting migration...';
+      await migrateLocalToRemote((msg) => { progressEl.textContent += (progressEl.textContent ? '\n' : '') + msg; });
+      startBtn.disabled = false;
+    };
+  }
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
+      progressEl.textContent = 'Exporting local files...';
+      try {
+        const blobs = await idbGetAll(STORE_BLOB);
+        if (!blobs.length) { progressEl.textContent = 'No local files to export.'; return; }
+        for (const rec of blobs) {
+          if (!rec.blob) continue;
+          const url = URL.createObjectURL(rec.blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = rec.name || (rec.id + '.audio');
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(()=>URL.revokeObjectURL(url), 5000);
+        }
+        progressEl.textContent = 'Export complete.';
+      } catch (e) {
+        progressEl.textContent = 'Export failed: ' + e.message;
+      }
+    };
+  }
+}
+
+/* ---------- Migration UI done ---------- */
+
+/* ---------- Misc helpers ---------- */
+function adjustForViewport() {
+  const playerEl = document.querySelector('.player');
+  if (!playerEl) return;
+  const vh = window.innerHeight;
+  if (vh < 500) {
+    playerEl.style.paddingBottom = 'calc(8px + env(safe-area-inset-bottom))';
+  } else {
+    playerEl.style.paddingBottom = 'calc(12px + env(safe-area-inset-bottom))';
+  }
+}
+window.addEventListener('resize', adjustForViewport);
+window.addEventListener('orientationchange', () => { setTimeout(adjustForViewport, 300); });
+
+/* Hamburger toggle */
+function updateHamburgerVisibility() {
+  if (window.innerWidth <= 900) {
+    mobileHamburger.style.display = 'inline-block';
+  } else {
+    mobileHamburger.style.display = 'none';
+    const asideEl = document.querySelector('aside');
+    if (asideEl) { asideEl.style.display = ''; asideEl.classList.remove('aside-overlay'); }
+  }
+}
+updateHamburgerVisibility();
+window.addEventListener('resize', updateHamburgerVisibility);
+
+mobileHamburger.addEventListener('click', () => {
+  const asideEl = document.querySelector('aside');
+  if (!asideEl) return;
+  const isOpen = asideEl.classList.contains('aside-overlay');
+  if (!isOpen) {
+    asideEl.classList.add('aside-overlay');
+    asideEl.style.display = 'block';
+    let backdrop = document.getElementById('mobile-aside-backdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'mobile-aside-backdrop';
+      backdrop.style.position = 'fixed';
+      backdrop.style.left = '0';
+      backdrop.style.top = '56px';
+      backdrop.style.right = '0';
+      backdrop.style.bottom = '0';
+      backdrop.style.background = 'rgba(0,0,0,0.45)';
+      backdrop.style.zIndex = '19999';
+      document.body.appendChild(backdrop);
+      backdrop.addEventListener('click', () => {
+        asideEl.classList.remove('aside-overlay');
+        asideEl.style.display = 'none';
+        backdrop.remove();
+      });
+    }
+  } else {
+    asideEl.classList.remove('aside-overlay');
+    asideEl.style.display = 'none';
+    const backdrop = document.getElementById('mobile-aside-backdrop');
+    if (backdrop) backdrop.remove();
+  }
+});
+
+/* Lazy init for heavy features */
+let deferredInitialized = false;
+function initDeferredFeatures() {
+  if (deferredInitialized) return;
+  deferredInitialized = true;
+  try {
+    if (typeof setupAudioVisualizer === 'function') setupAudioVisualizer();
+  } catch (e) { console.warn('Deferred init failed', e); }
+}
+['touchstart','click','keydown'].forEach(evt => {
+  window.addEventListener(evt, initDeferredFeatures, { once: true, passive: true });
+});
 
 /* ---------- Donate button ---------- */
 document.getElementById('donatePayPal').addEventListener('click', () => { window.open('https://freedomigame.kesug.com/?i=1/donate', '_blank'); });
@@ -1202,19 +1548,19 @@ document.getElementById('donatePayPal').addEventListener('click', () => { window
 async function init() {
   volRange.value = state.volume;
   audioEl.volume = state.volume;
-  await loadAll();
+  // Load local cache first for offline UX
+  await loadAllLocal();
   renderHeaderAuth();
   loadSubscriberCount();
   state.view = 'home';
   renderView();
+  // Then try to load server metadata (if functions configured)
+  try { await loadAllFromServer(); } catch (e) { /* ignore if server not configured */ }
+  // sync banner with first track if available
   if (state.tracks.length) {
     const first = state.tracks[0];
-    if (first.coverId) {
-      const url = await ensureCoverUrl(first.coverId);
-      setBannerImageSync(url || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
-    } else {
-      setBannerImageSync(first.coverUrl || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
-    }
+    if (first.coverUrl) setBannerImageSync(first.coverUrl || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
+    else if (first.coverId) { const url = await ensureCoverUrl(first.coverId); setBannerImageSync(url || DEFAULT_BANNER, `${first.title} — ${first.artist}`); }
   } else {
     setBannerImageSync(DEFAULT_BANNER);
   }
@@ -1222,9 +1568,7 @@ async function init() {
 init();
 
 /* Expose for debugging */
-window.MixMusic = { loadAll, addTrackFromFile, idbGetAll, idbGet, playTrack, state };
+window.MixMusic = { loadAllLocal, loadAllFromServer, addTrackRemote, addTrackFromFileLocal, migrateLocalToRemote, state };
 </script>
 </body>
 </html>
-
-
