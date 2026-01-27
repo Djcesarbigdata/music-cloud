@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Mix Music Cloud — Full App (Netlify + S3, Mobile, Migration)</title>
+<title>Mix Music Cloud — Full App (Netlify + S3, Mobile, Migration, Server Auth)</title>
 
 <!-- music-metadata-browser for reading embedded artwork -->
 <script src="https://unpkg.com/music-metadata-browser/dist/music-metadata-browser.umd.js"></script>
@@ -138,6 +138,10 @@
   /* Migration UI tweaks */
   #migrationSection .title { margin-bottom:6px; }
   #migrationProgress { white-space:pre-wrap; max-height:160px; overflow:auto; }
+
+  /* Spinner */
+  .mig-spinner { width:18px;height:18px;border-radius:50%;border:3px solid rgba(255,255,255,0.08);border-top-color:var(--accent);animation:spin 1s linear infinite;display:inline-block;vertical-align:middle }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -287,16 +291,9 @@
 </div>
 
 <script>
-/* =========================
-   Full app with:
-   - IndexedDB local cache + optional migration to S3 via Netlify functions
-   - Netlify + S3 client helpers (presign, upload, save metadata, list metadata)
-   - Username/password auth (client-side demo)
-   - Subscriber flow requiring login
-   - Artwork extraction (music-metadata-browser)
-   - Mobile improvements and hamburger nav
-   - Migration UI integrated into Uploads view
-   ========================= */
+/* Single-file app with Netlify + S3 integration, migration fixes, and server auth.
+   Make sure Netlify functions (getPresign, saveMeta, listMeta, getSignedGetUrl,
+   registerUser, loginUser) are deployed and env vars are set as described. */
 
 /* ---------- Defaults ---------- */
 const DEFAULT_BANNER_SVG = encodeURIComponent(`
@@ -392,6 +389,17 @@ async function idbDelete(storeName, key) {
     tx.objectStore(storeName).delete(key);
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbFindByIndex(storeName, indexName, value) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, "readonly");
+    const st = tx.objectStore(storeName);
+    const idx = st.index(indexName);
+    const r = idx.get(value);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
   });
 }
 
@@ -631,12 +639,12 @@ function showPanelForTrack(track) {
   }
   panelTitle.textContent = track.title || "Untitled";
   panelMeta.textContent = track.artist || "Unknown";
-  if (track.coverUrl && track.coverUrl.startsWith('data:')) {
-    setBannerImageSync(track.coverUrl, `${track.title} — ${track.artist}`);
+  if (track.coverUrl) {
+    setBannerImageSync(track.coverUrl || DEFAULT_BANNER, `${track.title} — ${track.artist}`);
   } else if (track.coverId) {
     ensureCoverUrl(track.coverId).then(url => setBannerImageSync(url || DEFAULT_BANNER, `${track.title} — ${track.artist}`));
   } else {
-    setBannerImageSync(track.coverUrl || DEFAULT_BANNER, `${track.title} — ${track.artist}`);
+    setBannerImageSync(DEFAULT_BANNER, `${track.title} — ${track.artist}`);
   }
   playerPanel.classList.remove("hidden");
   playerPanel.setAttribute("aria-hidden","false");
@@ -644,34 +652,6 @@ function showPanelForTrack(track) {
 function hidePanel() {
   playerPanel.classList.add("hidden");
   playerPanel.setAttribute("aria-hidden","true");
-}
-
-/* ---------- Simple auth (username + password) ---------- */
-async function deriveKey(password, salt, iterations=100000) {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveBits','deriveKey']);
-  const key = await crypto.subtle.deriveKey({name:'PBKDF2', salt: enc.encode(salt), iterations, hash:'SHA-256'}, keyMaterial, {name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
-  const raw = await crypto.subtle.exportKey('raw', key);
-  return btoa(String.fromCharCode(...new Uint8Array(raw)));
-}
-async function createUser(username, password) {
-  username = username.toLowerCase();
-  const existing = await idbFindByIndex(STORE_USERS, 'username', username);
-  if (existing) throw new Error('Username already taken');
-  const salt = crypto.getRandomValues(new Uint8Array(12)).reduce((s,n)=>s+('0'+n.toString(16)).slice(-2),'');
-  const passHash = await deriveKey(password, salt);
-  const user = { username, salt, passHash, createdAt: Date.now() };
-  const id = await idbAdd(STORE_USERS, user);
-  user.id = id;
-  return user;
-}
-async function verifyUser(username, password) {
-  username = username.toLowerCase();
-  const u = await idbFindByIndex(STORE_USERS, 'username', username);
-  if (!u) throw new Error('Invalid credentials');
-  const candidate = await deriveKey(password, u.salt);
-  if (candidate !== u.passHash) throw new Error('Invalid credentials');
-  return u;
 }
 
 /* ---------- Play controls ---------- */
@@ -814,39 +794,323 @@ visToggleBtn.addEventListener("click", () => {
   localStore.set("mc_vis_mode", visMode);
 });
 
-/* ---------- Play a track (local or remote) ---------- */
-async function playTrack(index) {
-  if (!state.tracks || !state.tracks.length) return;
-  if (index < 0 || index >= state.tracks.length) return;
-  state.currentIndex = index;
-  const meta = state.tracks[index];
+/* ---------- Netlify + S3 client helpers ---------- */
 
-  // If metadata has audioUrl (remote), use it; otherwise try local blob
-  let url = meta.audioUrl || null;
-  if (!url) {
-    url = await ensureAudioUrl(meta.id);
+// Request presigned PUT URL from Netlify function
+async function getPresignedUrl(filename, contentType) {
+  const res = await fetch(`/.netlify/functions/getPresign?name=${encodeURIComponent(filename)}&type=${encodeURIComponent(contentType || 'application/octet-stream')}`);
+  if (!res.ok) throw new Error('Presign request failed: ' + (await res.text()));
+  return res.json(); // { url, key, publicUrl }
+}
+
+// Upload file to S3 using presigned URL with retries
+async function uploadToS3WithPresign(file, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const presign = await getPresignedUrl(file.name, file.type || 'application/octet-stream');
+      const put = await fetch(presign.url, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file
+      });
+      if (!put.ok) throw new Error('Upload to S3 failed: ' + put.status + ' ' + put.statusText);
+      return { key: presign.key, url: presign.publicUrl || presign.url };
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+    }
   }
-  if (!url) { alert("Audio not found for this track."); return; }
-  audioEl.src = url;
-  audioEl.volume = state.volume;
-  await audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
-  nowTitle.textContent = meta.title || meta.originalName || "Untitled";
-  nowMeta.textContent = meta.artist || "Unknown";
+}
 
-  if (meta.coverUrl) {
-    setBannerImageSync(meta.coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
-  } else if (meta.coverId) {
-    const coverUrl = await ensureCoverUrl(meta.coverId);
-    setBannerImageSync(coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
-  } else {
-    setBannerImageSync(DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+// Upload via server proxy (Netlify function) - added helper
+async function uploadViaProxy(file, metadata = {}) {
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  if (metadata.title) fd.append('title', metadata.title);
+  if (metadata.artist) fd.append('artist', metadata.artist);
+
+  const res = await fetch('/.netlify/functions/uploadProxy', {
+    method: 'POST',
+    body: fd
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(()=>'<no body>');
+    throw new Error('Proxy upload failed: ' + res.status + ' ' + text);
+  }
+  return res.json(); // { ok:true, key, url, fields }
+}
+
+// Save metadata JSON to S3 via Netlify function with retries
+async function saveMetadataToServer(meta, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch('/.netlify/functions/saveMeta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(meta)
+      });
+      if (!res.ok) throw new Error('Saving metadata failed: ' + (await res.text()));
+      return res.json();
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await new Promise(r => setTimeout(r, 400 * attempt));
+    }
+  }
+}
+
+// List metadata objects (calls listMeta function)
+async function listAllMetadata() {
+  const res = await fetch('/.netlify/functions/listMeta');
+  if (!res.ok) throw new Error('Listing metadata failed: ' + (await res.text()));
+  return res.json(); // array of metadata objects
+}
+
+// Request presigned GET URL for playback
+async function getSignedGetUrl(key) {
+  const res = await fetch(`/.netlify/functions/getSignedGetUrl?key=${encodeURIComponent(key)}`);
+  if (!res.ok) throw new Error('Failed to get signed URL: ' + (await res.text()));
+  const data = await res.json();
+  return data.url;
+}
+
+/* ---------- Server auth client helpers (Netlify functions) ---------- */
+async function registerServer(username, password) {
+  const res = await fetch('/.netlify/functions/registerUser', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Registration failed');
+  }
+  return res.json();
+}
+async function loginServer(username, password) {
+  const res = await fetch('/.netlify/functions/loginUser', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Login failed');
+  }
+  return res.json(); // { id, username }
+}
+
+/* ---------- Remote upload flow (use instead of local-only addTrackFromFile) ---------- */
+async function addTrackRemote(file, metadata = {}, uploader) {
+  // 1) Extract artwork (reuse your existing function if present)
+  let art = null;
+  if (typeof extractAndStoreArtwork === 'function') {
+    try { art = await extractAndStoreArtwork(file); } catch (e) { console.warn('Artwork extraction failed', e); art = null; }
   }
 
-  showPanelForTrack(meta);
-  if (state.view !== "player") { state.prevView = state.view; state.view = "player"; renderView(); }
-  setupAudioVisualizer();
-  playerTitle.textContent = meta.title || "Untitled";
-  playerArtist.textContent = meta.artist || "Unknown";
+  // 2) Upload audio to S3 (keeps presign flow here; you can switch to uploadViaProxy if preferred)
+  const audioUpload = await uploadToS3WithPresign(file);
+
+  // 3) Upload cover if extracted (art.blob) or if user provided a cover File
+  let coverUrl = null;
+  if (art && art.blob) {
+    const coverFile = new File([art.blob], `cover-${file.name}.jpg`, { type: art.blob.type || 'image/jpeg' });
+    const coverUpload = await uploadToS3WithPresign(coverFile);
+    coverUrl = coverUpload.url;
+  }
+
+  // 4) Build metadata and save to server
+  const id = uid();
+  const meta = {
+    id,
+    title: metadata.title || file.name,
+    artist: metadata.artist || (uploader ? uploader.username : ''),
+    originalName: file.name,
+    mimeType: file.type,
+    size: file.size,
+    createdAt: Date.now(),
+    audioUrl: audioUpload.url,
+    s3Key: audioUpload.key,
+    coverUrl: coverUrl || (art ? art.coverUrl : null),
+    uploaderName: uploader ? uploader.username : 'Guest',
+    uploaderId: uploader ? uploader.id : null
+  };
+
+  await saveMetadataToServer(meta);
+  // Refresh client state from server
+  await loadAllFromServer();
+  return meta;
+}
+
+/* ---------- Load metadata from server into state ---------- */
+async function loadAllFromServer() {
+  try {
+    const metas = await listAllMetadata();
+    state.tracks = (metas || []).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    renderView();
+  } catch (e) {
+    console.warn('Failed to load metadata from server', e);
+  }
+}
+
+/* ---------- Playback helper using presigned GET ---------- */
+async function playRemoteByKey(s3Key) {
+  try {
+    const signedUrl = await getSignedGetUrl(s3Key);
+    const audio = document.getElementById('audio');
+    audio.src = signedUrl;
+    audio.crossOrigin = 'anonymous';
+    await audio.play();
+  } catch (err) {
+    console.error('Playback error', err);
+    alert('Unable to play track: ' + (err.message || err));
+  }
+}
+
+/* ---------- Migration helpers: append lines, spinner, retries ---------- */
+function appendMigrationLine(msg) {
+  const el = document.getElementById('migrationProgress');
+  if (!el) return;
+  const line = document.createElement('div');
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function safeUploadWithRetries(file, attempts = 3) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await uploadToS3WithPresign(file);
+    } catch (err) {
+      if (i === attempts) throw err;
+      await new Promise(r => setTimeout(r, 400 * i));
+    }
+  }
+}
+async function safeSaveMetaWithRetries(meta, attempts = 3) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await saveMetadataToServer(meta);
+    } catch (err) {
+      if (i === attempts) throw err;
+      await new Promise(r => setTimeout(r, 300 * i));
+    }
+  }
+}
+
+/* ---------- Migration: upload local IndexedDB blobs to S3 and save metadata ---------- */
+async function migrateLocalToRemote(onProgress) {
+  const progress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); else appendMigrationLine(msg); };
+
+  let blobs = [];
+  try {
+    blobs = await idbGetAll(STORE_BLOB);
+  } catch (e) {
+    progress('Failed to read local blobs: ' + e.message);
+    return;
+  }
+  if (!blobs.length) {
+    progress('No local uploads found to migrate.');
+    return;
+  }
+
+  progress(`Found ${blobs.length} local file(s). Starting migration...`);
+  const startBtn = document.getElementById('startMigrationBtn');
+  if (startBtn) { startBtn.disabled = true; startBtn.innerHTML = '<span class="mig-spinner"></span> Migrating...'; }
+
+  for (let i = 0; i < blobs.length; i++) {
+    const rec = blobs[i];
+    try {
+      progress(`(${i+1}/${blobs.length}) Preparing ${rec.name || rec.id}...`);
+      const metaLocal = await idbGet(STORE_META, rec.id).catch(()=>null);
+      const file = new File([rec.blob], rec.name || `${rec.id}.audio`, { type: metaLocal?.mimeType || rec.blob.type || 'audio/mpeg' });
+
+      progress(`Uploading audio: ${file.name}`);
+      // <-- PATCHED: use uploadViaProxy for migration uploads to avoid presigned PUT CORS issues -->
+      const uploaded = await uploadViaProxy(file);
+
+      let coverUrl = null;
+      if (metaLocal && metaLocal.coverId) {
+        const coverRec = await idbGet(STORE_COVERS, metaLocal.coverId).catch(()=>null);
+        if (coverRec && coverRec.blob) {
+          const coverFile = new File([coverRec.blob], `cover-${file.name}.jpg`, { type: coverRec.blob.type || 'image/jpeg' });
+          progress(`Uploading cover for ${file.name}`);
+          // <-- PATCHED: use uploadViaProxy for cover upload as well -->
+          const cu = await uploadViaProxy(coverFile);
+          coverUrl = cu.url;
+        }
+      }
+
+      const newMeta = {
+        id: rec.id,
+        title: metaLocal?.title || rec.name || 'Untitled',
+        artist: metaLocal?.artist || '',
+        originalName: rec.name,
+        mimeType: metaLocal?.mimeType || file.type,
+        size: file.size,
+        createdAt: metaLocal?.createdAt || Date.now(),
+        audioUrl: uploaded.url,
+        s3Key: uploaded.key,
+        coverUrl: coverUrl || (metaLocal?.coverUrl || null),
+        uploaderName: state.currentUser?.username || (metaLocal?.uploaderName || 'Migrated'),
+        uploaderId: state.currentUser?.id || (metaLocal?.uploaderId || null)
+      };
+
+      progress(`Saving metadata for ${file.name}`);
+      await safeSaveMetaWithRetries(newMeta);
+
+      progress(`Migrated ${file.name} successfully.`);
+    } catch (err) {
+      console.error('Migration error for record', rec, err);
+      progress(`Error migrating ${rec.name || rec.id}: ${err.message || err}`);
+    }
+  }
+
+  progress('Migration finished. Refreshing list from server...');
+  await loadAllFromServer();
+  progress('Done.');
+
+  if (startBtn) { startBtn.disabled = false; startBtn.textContent = 'Migrate local uploads to cloud'; }
+}
+
+/* Wire migration UI buttons (call this once after DOM is ready or after renderUploads) */
+function wireMigrationUI() {
+  const startBtn = document.getElementById('startMigrationBtn');
+  const exportBtn = document.getElementById('exportLocalBtn');
+  const progressEl = document.getElementById('migrationProgress');
+  if (startBtn) {
+    startBtn.onclick = async () => {
+      if (!confirm('This will upload your local audio files to cloud storage. Continue?')) return;
+      startBtn.disabled = true;
+      progressEl.innerHTML = '';
+      appendMigrationLine('Starting migration...');
+      await migrateLocalToRemote((msg) => { appendMigrationLine(msg); });
+      startBtn.disabled = false;
+    };
+  }
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
+      progressEl.textContent = 'Exporting local files...';
+      try {
+        const blobs = await idbGetAll(STORE_BLOB);
+        if (!blobs.length) { progressEl.textContent = 'No local files to export.'; return; }
+        for (const rec of blobs) {
+          if (!rec.blob) continue;
+          const url = URL.createObjectURL(rec.blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = rec.name || (rec.id + '.audio');
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(()=>URL.revokeObjectURL(url), 5000);
+        }
+        progressEl.textContent = 'Export complete.';
+      } catch (e) {
+        progressEl.textContent = 'Export failed: ' + e.message;
+      }
+    };
+  }
 }
 
 /* ---------- Render views ---------- */
@@ -1131,7 +1395,7 @@ function openPlayerScreen() { playerScreen.classList.add("open"); playerScreen.s
 function closePlayerScreen() { playerScreen.classList.remove("open"); playerScreen.setAttribute("aria-hidden","true"); const idx = state.currentIndex; const track = (idx >= 0 && state.tracks[idx]) ? state.tracks[idx] : null; if (track) showPanelForTrack(track); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePlayerScreen(); });
 
-/* ---------- Header auth UI ---------- */
+/* ---------- Header auth UI (server-backed) ---------- */
 function renderHeaderAuth() {
   const container = document.getElementById('userBox');
   container.innerHTML = '';
@@ -1157,35 +1421,38 @@ function renderHeaderAuth() {
     `;
     container.appendChild(div);
     setTimeout(()=> {
-      document.getElementById('ha_login').onclick = handleHeaderLogin;
-      document.getElementById('ha_signup').onclick = handleHeaderSignup;
+      document.getElementById('ha_login').onclick = handleHeaderLoginServer;
+      document.getElementById('ha_signup').onclick = handleHeaderSignupServer;
     }, 0);
   }
 }
-async function handleHeaderSignup() {
+
+/* ---------- Header modal handlers using server auth ---------- */
+async function handleHeaderSignupServer() {
   const username = document.getElementById('ha_username').value.trim();
   const pass = document.getElementById('ha_pass').value;
   if (!username || !pass) return alert('Username and password required');
   try {
-    const user = await createUser(username, pass);
+    await registerServer(username, pass);
+    const user = await loginServer(username, pass);
     state.currentUser = { id: user.id, username: user.username };
     localStore.set("mmc_demo_user", state.currentUser);
-    alert('Signed up and logged in (demo)');
+    alert('Signed up and logged in');
     renderHeaderAuth();
     closeUploadModal();
   } catch (err) {
     alert(err.message || 'Signup failed');
   }
 }
-async function handleHeaderLogin() {
+async function handleHeaderLoginServer() {
   const username = document.getElementById('ha_username').value.trim();
   const pass = document.getElementById('ha_pass').value;
   if (!username || !pass) return alert('Username and password required');
   try {
-    const user = await verifyUser(username, pass);
+    const user = await loginServer(username, pass);
     state.currentUser = { id: user.id, username: user.username };
     localStore.set("mmc_demo_user", state.currentUser);
-    alert('Logged in (demo)');
+    alert('Logged in');
     renderHeaderAuth();
     closeUploadModal();
   } catch (err) {
@@ -1211,7 +1478,7 @@ modalLoginBtn.addEventListener('click', async () => {
   const p = modalPassword.value;
   if (!u || !p) { modalMsg.textContent = 'Username and password required'; return; }
   try {
-    const user = await verifyUser(u, p);
+    const user = await loginServer(u, p);
     state.currentUser = { id: user.id, username: user.username };
     localStore.set("mmc_demo_user", state.currentUser);
     modalMsg.textContent = 'Logged in';
@@ -1224,7 +1491,8 @@ modalSignupBtn.addEventListener('click', async () => {
   const p = modalPassword.value;
   if (!u || !p) { modalMsg.textContent = 'Username and password required'; return; }
   try {
-    const user = await createUser(u, p);
+    await registerServer(u, p);
+    const user = await loginServer(u, p);
     state.currentUser = { id: user.id, username: user.username };
     localStore.set("mmc_demo_user", state.currentUser);
     modalMsg.textContent = 'Signed up and logged in';
@@ -1259,214 +1527,6 @@ subscribeBtn.addEventListener('click', () => {
   subscribeBtn.textContent = 'Subscribed';
   subscribeBtn.disabled = true;
 });
-
-/* ---------- Netlify + S3 client helpers ---------- */
-
-// Request presigned PUT URL from Netlify function
-async function getPresignedUrl(filename, contentType) {
-  const res = await fetch(`/.netlify/functions/getPresign?name=${encodeURIComponent(filename)}&type=${encodeURIComponent(contentType || 'application/octet-stream')}`);
-  if (!res.ok) throw new Error('Presign request failed: ' + (await res.text()));
-  return res.json(); // { url, key, publicUrl }
-}
-
-// Upload file to S3 using presigned URL
-async function uploadToS3WithPresign(file) {
-  const presign = await getPresignedUrl(file.name, file.type || 'application/octet-stream');
-  const put = await fetch(presign.url, {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    body: file
-  });
-  if (!put.ok) throw new Error('Upload to S3 failed: ' + put.statusText);
-  return { key: presign.key, url: presign.publicUrl };
-}
-
-// Save metadata JSON to S3 via Netlify function
-async function saveMetadataToServer(meta) {
-  const res = await fetch('/.netlify/functions/saveMeta', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(meta)
-  });
-  if (!res.ok) throw new Error('Saving metadata failed: ' + (await res.text()));
-  return res.json();
-}
-
-// List metadata objects (calls listMeta function)
-async function listAllMetadata() {
-  const res = await fetch('/.netlify/functions/listMeta');
-  if (!res.ok) throw new Error('Listing metadata failed: ' + (await res.text()));
-  return res.json(); // array of metadata objects
-}
-
-/* ---------- Remote upload flow (use instead of local-only addTrackFromFile) ---------- */
-async function addTrackRemote(file, metadata = {}, uploader) {
-  // 1) Extract artwork (reuse your existing function if present)
-  let art = null;
-  if (typeof extractAndStoreArtwork === 'function') {
-    try { art = await extractAndStoreArtwork(file); } catch (e) { console.warn('Artwork extraction failed', e); art = null; }
-  }
-
-  // 2) Upload audio to S3
-  const audioUpload = await uploadToS3WithPresign(file);
-
-  // 3) Upload cover if extracted (art.blob) or if user provided a cover File
-  let coverUrl = null;
-  if (art && art.blob) {
-    const coverFile = new File([art.blob], `cover-${file.name}.jpg`, { type: art.blob.type || 'image/jpeg' });
-    const coverUpload = await uploadToS3WithPresign(coverFile);
-    coverUrl = coverUpload.url;
-  }
-
-  // 4) Build metadata and save to server
-  const id = uid();
-  const meta = {
-    id,
-    title: metadata.title || file.name,
-    artist: metadata.artist || (uploader ? uploader.username : ''),
-    originalName: file.name,
-    mimeType: file.type,
-    size: file.size,
-    createdAt: Date.now(),
-    audioUrl: audioUpload.url,
-    s3Key: audioUpload.key,
-    coverUrl: coverUrl || (art ? art.coverUrl : null),
-    uploaderName: uploader ? uploader.username : 'Guest',
-    uploaderId: uploader ? uploader.id : null
-  };
-
-  await saveMetadataToServer(meta);
-  // Refresh client state from server
-  await loadAllFromServer();
-  return meta;
-}
-
-/* ---------- Load metadata from server into state ---------- */
-async function loadAllFromServer() {
-  try {
-    const metas = await listAllMetadata();
-    state.tracks = (metas || []).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-    renderView();
-  } catch (e) {
-    console.warn('Failed to load metadata from server', e);
-  }
-}
-
-/* ---------- Migration: upload local IndexedDB blobs to S3 and save metadata ---------- */
-async function migrateLocalToRemote(onProgress) {
-  const progress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); else console.log(msg); };
-
-  // 1) Read all blob records
-  let blobs = [];
-  try {
-    blobs = await idbGetAll(STORE_BLOB); // tracks_blob store
-  } catch (e) {
-    progress('Failed to read local blobs: ' + e.message);
-    return;
-  }
-  if (!blobs.length) {
-    progress('No local uploads found to migrate.');
-    return;
-  }
-
-  progress(`Found ${blobs.length} local file(s). Starting migration...`);
-
-  for (let i = 0; i < blobs.length; i++) {
-    const rec = blobs[i];
-    try {
-      progress(`(${i+1}/${blobs.length}) Preparing ${rec.name || rec.id}...`);
-      const metaLocal = await idbGet(STORE_META, rec.id).catch(()=>null);
-      // create File from blob
-      const file = new File([rec.blob], rec.name || `${rec.id}.audio`, { type: metaLocal?.mimeType || rec.blob.type || 'audio/mpeg' });
-
-      // upload audio
-      progress(`Uploading audio: ${file.name}`);
-      const uploaded = await uploadToS3WithPresign(file);
-
-      // upload cover if exists
-      let coverUrl = null;
-      if (metaLocal && metaLocal.coverId) {
-        const coverRec = await idbGet(STORE_COVERS, metaLocal.coverId).catch(()=>null);
-        if (coverRec && coverRec.blob) {
-          const coverFile = new File([coverRec.blob], `cover-${file.name}.jpg`, { type: coverRec.blob.type || 'image/jpeg' });
-          progress(`Uploading cover for ${file.name}`);
-          const cu = await uploadToS3WithPresign(coverFile);
-          coverUrl = cu.url;
-        }
-      }
-
-      // build new metadata
-      const newMeta = {
-        id: rec.id,
-        title: metaLocal?.title || rec.name || 'Untitled',
-        artist: metaLocal?.artist || '',
-        originalName: rec.name,
-        mimeType: metaLocal?.mimeType || file.type,
-        size: file.size,
-        createdAt: metaLocal?.createdAt || Date.now(),
-        audioUrl: uploaded.url,
-        s3Key: uploaded.key,
-        coverUrl: coverUrl || (metaLocal?.coverUrl || null),
-        uploaderName: state.currentUser?.username || (metaLocal?.uploaderName || 'Migrated'),
-        uploaderId: state.currentUser?.id || (metaLocal?.uploaderId || null)
-      };
-
-      // save metadata to server
-      progress(`Saving metadata for ${file.name}`);
-      await saveMetadataToServer(newMeta);
-
-      progress(`Migrated ${file.name} successfully.`);
-    } catch (err) {
-      console.error('Migration error for record', rec, err);
-      progress(`Error migrating ${rec.name || rec.id}: ${err.message || err}`);
-    }
-  }
-
-  progress('Migration finished. Refreshing list from server...');
-  await loadAllFromServer();
-  progress('Done.');
-}
-
-/* Wire migration UI buttons (call this once after DOM is ready or after renderUploads) */
-function wireMigrationUI() {
-  const startBtn = document.getElementById('startMigrationBtn');
-  const exportBtn = document.getElementById('exportLocalBtn');
-  const progressEl = document.getElementById('migrationProgress');
-  if (startBtn) {
-    startBtn.onclick = async () => {
-      if (!confirm('This will upload your local audio files to cloud storage. Continue?')) return;
-      startBtn.disabled = true;
-      progressEl.textContent = 'Starting migration...';
-      await migrateLocalToRemote((msg) => { progressEl.textContent += (progressEl.textContent ? '\n' : '') + msg; });
-      startBtn.disabled = false;
-    };
-  }
-  if (exportBtn) {
-    exportBtn.onclick = async () => {
-      progressEl.textContent = 'Exporting local files...';
-      try {
-        const blobs = await idbGetAll(STORE_BLOB);
-        if (!blobs.length) { progressEl.textContent = 'No local files to export.'; return; }
-        for (const rec of blobs) {
-          if (!rec.blob) continue;
-          const url = URL.createObjectURL(rec.blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = rec.name || (rec.id + '.audio');
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(()=>URL.revokeObjectURL(url), 5000);
-        }
-        progressEl.textContent = 'Export complete.';
-      } catch (e) {
-        progressEl.textContent = 'Export failed: ' + e.message;
-      }
-    };
-  }
-}
-
-/* ---------- Migration UI done ---------- */
 
 /* ---------- Misc helpers ---------- */
 function adjustForViewport() {
@@ -1544,19 +1604,54 @@ function initDeferredFeatures() {
 /* ---------- Donate button ---------- */
 document.getElementById('donatePayPal').addEventListener('click', () => { window.open('https://freedomigame.kesug.com/?i=1/donate', '_blank'); });
 
+/* ---------- Play a track (local or remote) ---------- */
+async function playTrack(index) {
+  if (!state.tracks || !state.tracks.length) return;
+  if (index < 0 || index >= state.tracks.length) return;
+  state.currentIndex = index;
+  const meta = state.tracks[index];
+
+  // If metadata has s3Key (remote), use presigned GET; otherwise try local blob
+  if (meta.s3Key) {
+    await playRemoteByKey(meta.s3Key);
+  } else {
+    let url = meta.audioUrl || null;
+    if (!url) url = await ensureAudioUrl(meta.id);
+    if (!url) { alert("Audio not found for this track."); return; }
+    audioEl.src = url;
+    audioEl.volume = state.volume;
+    await audioEl.play().catch(()=>{});
+  }
+
+  nowTitle.textContent = meta.title || meta.originalName || "Untitled";
+  nowMeta.textContent = meta.artist || "Unknown";
+
+  if (meta.coverUrl) {
+    setBannerImageSync(meta.coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  } else if (meta.coverId) {
+    const coverUrl = await ensureCoverUrl(meta.coverId);
+    setBannerImageSync(coverUrl || DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  } else {
+    setBannerImageSync(DEFAULT_BANNER, `${meta.title} — ${meta.artist}`);
+  }
+
+  showPanelForTrack(meta);
+  if (state.view !== "player") { state.prevView = state.view; state.view = "player"; renderView(); }
+  setupAudioVisualizer();
+  playerTitle.textContent = meta.title || "Untitled";
+  playerArtist.textContent = meta.artist || "Unknown";
+}
+
 /* ---------- Init ---------- */
 async function init() {
   volRange.value = state.volume;
   audioEl.volume = state.volume;
-  // Load local cache first for offline UX
   await loadAllLocal();
   renderHeaderAuth();
   loadSubscriberCount();
   state.view = 'home';
   renderView();
-  // Then try to load server metadata (if functions configured)
   try { await loadAllFromServer(); } catch (e) { /* ignore if server not configured */ }
-  // sync banner with first track if available
   if (state.tracks.length) {
     const first = state.tracks[0];
     if (first.coverUrl) setBannerImageSync(first.coverUrl || DEFAULT_BANNER, `${first.title} — ${first.artist}`);
@@ -1568,7 +1663,7 @@ async function init() {
 init();
 
 /* Expose for debugging */
-window.MixMusic = { loadAllLocal, loadAllFromServer, addTrackRemote, addTrackFromFileLocal, migrateLocalToRemote, state };
+window.MixMusic = { loadAllLocal, loadAllFromServer, addTrackRemote, addTrackFromFileLocal, migrateLocalToRemote, playRemoteByKey, state };
 </script>
 </body>
 </html>
